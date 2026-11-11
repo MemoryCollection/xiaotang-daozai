@@ -77,6 +77,13 @@ jobs:
             Write-Host "::error title=打包失败::$($_.Exception.Message) @ $($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber)"
             exit 1
           }
+      # Release 说明取自 CHANGELOG.md 对应版本段落：应用内「本次更新」读的就是
+      # GitHub Release 的 body，只放自动生成的 Full Changelog 会看不到更新内容。
+      # 若 CHANGELOG 漏写该版本，脚本直接报错，避免发出没有说明的版本。
+      - name: 生成更新说明
+        shell: pwsh
+        run: |
+          ./scripts/release-notes.ps1 -Version $env:GITHUB_REF_NAME -Output dist/release-notes.md
       - name: 发布 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -84,4 +91,5 @@ jobs:
             dist/Daozai-Setup-*.exe
             dist/Daozai-*-windows-x64.zip
             dist/SHA256SUMS.txt
-          generate_release_notes: true
+          body_path: dist/release-notes.md
+          generate_release_notes: false
