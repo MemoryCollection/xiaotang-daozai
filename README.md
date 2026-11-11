@@ -8,12 +8,12 @@
 
 Windows 桌面伙伴，把消息、音乐、日程和 AI 额度放到手边。
 
-[![最新版本](https://img.shields.io/github/v/release/Renly1994/xiaotang-daozai?color=7955b8&label=最新版本)](https://github.com/Renly1994/xiaotang-daozai/releases/latest)
+[![最新版本](https://img.shields.io/github/v/release/MemoryCollection/xiaotang-daozai?color=7955b8&label=最新版本)](https://github.com/MemoryCollection/xiaotang-daozai/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](#下载安装)
 [![开源许可](https://img.shields.io/badge/License-MIT-3cbf91)](LICENSE)
 [![Rust 与 egui](https://img.shields.io/badge/Rust-egui-8b6ca8)](#从源码构建与参与开发)
 
-**[下载 Windows 版](https://github.com/Renly1994/xiaotang-daozai/releases/latest)** · [使用指南](docs/USAGE.md) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Renly1994/xiaotang-daozai/issues)
+**[下载 Windows 版](https://github.com/MemoryCollection/xiaotang-daozai/releases/latest)** · [使用指南](docs/USAGE.md) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/MemoryCollection/xiaotang-daozai/issues)
 
 </div>
 
@@ -110,7 +110,7 @@ Windows 桌面伙伴，把消息、音乐、日程和 AI 额度放到手边。
 
 ## 下载安装
 
-前往 **[最新正式版](https://github.com/Renly1994/xiaotang-daozai/releases/latest)**，按使用习惯选择：
+前往 **[最新正式版](https://github.com/MemoryCollection/xiaotang-daozai/releases/latest)**，按使用习惯选择：
 
 | 下载文件 | 使用方式 |
 | --- | --- |

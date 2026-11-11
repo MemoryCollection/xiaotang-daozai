@@ -1,27 +1,81 @@
 ﻿//! 持久化与状态模型。
 //!
-//! 文件布局与原工具同名同结构（原工具字符串中可见的路径与键名），但默认目录
-//! 用独立的 `%APPDATA%\Daozai`，避免与原工具的 `%APPDATA%\Nusa` 互相覆盖：
-//!   %APPDATA%\Daozai\settings.txt   -> pet=0/1, minimal=0/1
-//!   %APPDATA%\Daozai\todo.txt
-//!   %APPDATA%\Daozai\water.txt      -> bottle=<ml> / goal=<ml> / start=YYYY-MM-DD
-//!   %APPDATA%\Daozai\shelf.txt      -> 置物清单（每行一个绝对路径）
+//! 便携版：配置与程序放在同一目录（安装目录 / 解压目录），拷走整个文件夹即带走全部数据：
+//!   <程序目录>\settings.txt   -> pet=0/1, minimal=0/1
+//!   <程序目录>\todo.txt
+//!   <程序目录>\water.txt      -> bottle=<ml> / goal=<ml> / start=YYYY-MM-DD
+//!   <程序目录>\shelf.txt      -> 置物清单（每行一个绝对路径）
 //!
+//! 程序目录不可写（例如装进 Program Files）时退回 `%APPDATA%\Daozai`。
+//! 首次以便携方式启动时，会把旧的 `%APPDATA%\Daozai` 内容迁移过来，旧用户设置不丢。
 //! 设置环境变量 `DAOZAI_DATA_DIR` 可把以上目录整体改到别处（用于与已安装的
 //! 原工具并存、或跑测试时不碰真实数据）。
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 fn env_dir(key: &str) -> PathBuf {
     PathBuf::from(std::env::var(key).unwrap_or_else(|_| ".".into()))
+}
+
+fn legacy_dir() -> PathBuf {
+    env_dir("APPDATA").join("Daozai")
+}
+
+/// 程序所在目录；取不到时按旧路径处理。
+fn program_dir() -> Option<PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.to_path_buf())
+}
+
+/// 只读目录（Program Files、只读介质）不能存配置。
+fn writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".daozai-write-{}", std::process::id()));
+    match fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(_) => { let _ = fs::remove_file(&probe); true }
+        Err(_) => false,
+    }
+}
+
+/// 把旧的 `%APPDATA%\Daozai` 内容搬进程序目录：逐个复制，全部成功才删旧目录，
+/// 避免迁移中断时丢数据。调试构建（target 目录里跑）不做迁移，免得搬走开发机的真实数据。
+fn migrate_legacy(legacy: &Path, dir: &Path) {
+    if cfg!(debug_assertions) || !legacy.is_dir() || dir.join("settings.txt").exists() { return; }
+    if copy_tree(legacy, dir) { let _ = fs::remove_dir_all(legacy); }
+}
+
+fn copy_tree(from: &Path, to: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(from) else { return false; };
+    let mut complete = true;
+    for entry in entries.flatten() {
+        let source = entry.path();
+        let target = to.join(entry.file_name());
+        if source.is_dir() {
+            if fs::create_dir_all(&target).is_err() || !copy_tree(&source, &target) { complete = false; }
+        } else if !target.exists() && fs::copy(&source, &target).is_err() {
+            complete = false;
+        }
+    }
+    complete
+}
+
+fn program_config_dir() -> PathBuf {
+    let Some(dir) = program_dir() else { return legacy_dir(); };
+    if !writable(&dir) { return legacy_dir(); }
+    migrate_legacy(&legacy_dir(), &dir);
+    dir
 }
 
 pub fn config_dir() -> PathBuf {
     if let Ok(root) = std::env::var("DAOZAI_DATA_DIR") {
         return PathBuf::from(root);
     }
-    env_dir("APPDATA").join("Daozai")
+    // 单元测试跑在 target 目录里，不写程序目录、也不做迁移。
+    if cfg!(test) {
+        return legacy_dir();
+    }
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(program_config_dir).clone()
 }
 
 fn read_kv(path: &Path) -> Vec<(String, String)> {
