@@ -588,7 +588,7 @@ mod tests {
             }
             *hit().lock().unwrap_or_else(|e|e.into_inner())=saved;
             let _=DestroyWindow(hwnd);
-        }}}}
+        }}}
         });
     }
 
