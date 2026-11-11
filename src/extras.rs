@@ -1348,6 +1348,8 @@ impl App {
                             setting_row(ui,"极简刘海","收起时显示一条细线",&mut minimal);
                             if minimal!=self.settings.minimal {self.set_minimal(minimal);}
                             ui.separator();
+                            setting_row(ui,"悬停展开","关闭后悬停只轻微胀大提示；单击展开，双击打开设置",&mut self.settings.hover_expand);
+                            ui.separator();
 
                             let mut pet=self.settings.pet;
                             setting_row(ui,"岛仔吉祥物","收起时常驻，播放音乐时一起唱歌",&mut pet);

@@ -1712,10 +1712,13 @@ impl App {
         let p = self.progress();
         let (w, h) = (self.w.pos, self.h.pos);
         let panel = self.island_rect(win, w, h);
-        // 双击岛体任意位置打开设置窗口：背景响应先注册，后绘制的按钮/页面控件优先消费点击，
-        // 所以只有双击落在没有控件的空白处（或收起后的胶囊本体）才会触发。
-        if ui.interact(panel,ui.id().with("island-bg"),egui::Sense::click()).double_clicked() {
+        // 岛体背景响应先注册，后绘制的按钮/页面控件优先消费点击：
+        // 双击空白处（或收起后的胶囊本体）打开设置，收起态单击直接展开。
+        let island_bg=ui.interact(panel,ui.id().with("island-bg"),egui::Sense::click());
+        if island_bg.double_clicked() {
             self.open_settings();
+        } else if island_bg.clicked() && !self.open {
+            self.expand_open();
         }
         let messenger_rect=self.messenger_badge_rect(win,panel);
         let appear=self.messenger_appear();
@@ -2231,6 +2234,16 @@ impl App {
         }
     }
 
+    /// 立即展开悬浮岛（单击展开），与悬停展开共用同一套弹簧参数。
+    fn expand_open(&mut self) {
+        if self.open {return;}
+        self.open=true;
+        self.w.tune(OPEN_W.0,OPEN_W.1);
+        self.h.tune(OPEN_H.0,OPEN_H.1);
+        self.w.target=PW;
+        self.h.target=self.expanded_height();
+    }
+
     /// 悬停状态机：意图缓冲 → 弹簧展开 → 离开延迟 → 临界阻尼收起；全程可打断。
     fn morph(&mut self, want: bool, inside: bool, t: f64, dt: f32) {
         let (bw, bh) = self.base_size();
@@ -2238,12 +2251,9 @@ impl App {
             self.leave_since = None;
             let since = *self.hover_since.get_or_insert(t);
             let intent=if self.effective_minimal() {MINIMAL_HOVER_INTENT}else{HOVER_INTENT};
-            if !self.open && (self.drag_hot || t - since >= intent) {
-                self.open = true;
-                self.w.tune(OPEN_W.0, OPEN_W.1);
-                self.h.tune(OPEN_H.0, OPEN_H.1);
-                self.w.target = PW;
-                self.h.target = self.expanded_height();
+            // 悬停展开可关闭：关闭后悬停只走下面的轻微胀大，展开交给单击。
+            if !self.open && (self.drag_hot || self.settings.hover_expand && t - since >= intent) {
+                self.expand_open();
                 if self.drag_hot {
                     // 拖入不等缓冲，直接给一点初速度，30 ms 内就能看到形变
                     self.w.vel = self.w.vel.max(600.0);
