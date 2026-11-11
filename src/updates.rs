@@ -72,7 +72,7 @@ impl State {
         if self.rx.is_some() { ctx.request_repaint_after(Duration::from_millis(100)); }
     }
 
-    pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn ui(&mut self, ui: &mut egui::Ui, accel: &mut String) {
         if ui.add_enabled(self.rx.is_none(), egui::Button::new("检查更新")).clicked() {
             let (tx, rx) = mpsc::channel(); self.rx = Some(rx);
             self.message.clear(); self.result = None; self.dialog_open = false;
@@ -90,6 +90,12 @@ impl State {
             None if self.rx.is_some() => { ui.label("正在检查…"); }
             _ => {}
         }
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("下载加速").size(12.0));
+            ui.add(egui::TextEdit::singleline(accel).hint_text("可选，例如 https://gh.6qu.top/?pw=…").desired_width(240.0));
+        });
+        ui.label(egui::RichText::new("留空直接连 GitHub；填加速站首页（含 ?pw= 令牌）后，更新包改从该地址下载，安装包仍做 SHA-256 校验。").size(11.0));
         ui.add_space(5.0);
     }
 
@@ -98,7 +104,7 @@ impl State {
         self.dialog_open = false;
     }
 
-    pub(crate) fn dialog_ui(&mut self, ctx: &egui::Context) {
+    pub(crate) fn dialog_ui(&mut self, ctx: &egui::Context, accel: &str) {
         use crate::theme::{self, W};
         if !self.dialog_open { return; }
         let Some(Ok(Some(release))) = self.result.clone() else { return; };
@@ -199,9 +205,9 @@ impl State {
                                     let (tx,rx)=mpsc::channel(); self.rx=Some(rx);
                                     let cancel=Arc::new(AtomicBool::new(false)); self.cancel=Some(cancel.clone());
                                     self.progress=0.0; self.message.clear();
-                                    let ctx=ui.ctx().clone(); let release=release.clone();
+                                    let ctx=ui.ctx().clone(); let release=release.clone(); let accel=accel.to_owned();
                                     std::thread::spawn(move || {
-                                        let event=match download(&release,&tx,&cancel){Ok(work)=>Event::Ready(work),Err(error)=>Event::Failed(error)};
+                                        let event=match download(&release,&accel,&tx,&cancel){Ok(work)=>Event::Ready(work),Err(error)=>Event::Failed(error)};
                                         let _=tx.send(event); ctx.request_repaint();
                                     });
                                 }
@@ -298,6 +304,24 @@ fn http_agent() -> Result<ureq::Agent, String> {
     update_agent(proxy.as_deref(), Duration::from_secs(15))
 }
 
+/// 下载加速：把「前缀 + 原始地址 + 查询串」拼成加速地址，例如
+/// `https://gh.6qu.top/?pw=…` + 原始 zip 地址 → `https://gh.6qu.top/https://github.com/…zip?pw=…`。
+/// 留空或不是 http(s) 前缀时返回 None，改回直连。
+fn accelerate(prefix: &str, url: &str) -> Option<String> {
+    let prefix = prefix.trim();
+    if prefix.is_empty() { return None; }
+    let (head, query) = match prefix.split_once('?') {
+        Some((head, query)) => (head, Some(query)),
+        None => (prefix, None),
+    };
+    let head = head.trim_end_matches('/');
+    if !(head.starts_with("https://") || head.starts_with("http://")) { return None; }
+    Some(match query.filter(|query| !query.is_empty()) {
+        Some(query) => format!("{head}/{url}?{query}"),
+        None => format!("{head}/{url}"),
+    })
+}
+
 fn check() -> Result<Option<Release>, String> {
     let response = http_agent()?
         .get(API).set("User-Agent", concat!("Daozai/", env!("CARGO_PKG_VERSION")))
@@ -327,14 +351,15 @@ fn release_info(value: &serde_json::Value, current: &str) -> Result<Option<Relea
         notes: value["body"].as_str().unwrap_or("").to_owned(), package }))
 }
 
-fn download(release: &Release, tx: &mpsc::Sender<Event>, cancel: &AtomicBool) -> Result<PathBuf, String> {
+fn download(release: &Release, accel: &str, tx: &mpsc::Sender<Event>, cancel: &AtomicBool) -> Result<PathBuf, String> {
     let package = release.package.as_ref().ok_or("请通过浏览器下载此版本")?;
     let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).ok_or("无法找到更新缓存目录")?.join("Daozai/Updates");
     let work = root.join(format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
     std::fs::create_dir_all(&work).map_err(|_| "无法创建更新缓存")?;
+    let url = accelerate(accel, &package.url).unwrap_or_else(|| package.url.clone());
     let result = (|| {
         let response = http_agent()?
-            .get(&package.url).call().map_err(|_| "连接下载服务器失败，请检查网络或代理，或使用网盘下载")?;
+            .get(&url).call().map_err(|_| "连接下载服务器失败，请检查网络或代理，或使用网盘下载")?;
         if !response.get_url().starts_with("https://") { return Err("更新下载未使用安全连接".into()); }
         let mut input = response.into_reader();
         let mut output = std::fs::File::create(work.join("update.zip")).map_err(|_| "无法保存更新包")?;
@@ -514,6 +539,16 @@ mod tests {
             let mut invalid = value.clone(); invalid["assets"][0][field] = bad;
             assert!(release_info(&invalid, "0.6.39").unwrap().unwrap().package.is_none());
         }
+    }
+    #[test]
+    fn acceleration_prefix_keeps_the_original_url_and_carries_the_token() {
+        let url = "https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe";
+        assert_eq!(accelerate("https://gh.6qu.top/?pw=token", url).as_deref(),
+            Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe?pw=token"));
+        assert_eq!(accelerate(" https://gh.6qu.top/ ", url).as_deref(),
+            Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe"));
+        assert_eq!(accelerate("", url), None);
+        assert_eq!(accelerate("gh.6qu.top", url), None);
     }
     #[test]
     fn download_rejects_truncation_corruption_excess_and_cancellation() {

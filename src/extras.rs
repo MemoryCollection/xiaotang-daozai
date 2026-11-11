@@ -1082,7 +1082,7 @@ impl App {
     pub fn settings_ui(&mut self,ctx:&egui::Context,autostart:bool){
         if !self.settings_open{release_support_codes(ctx);}
         self.updates.poll(ctx);
-        self.updates.dialog_ui(ctx);
+        self.updates.dialog_ui(ctx,&self.settings.update_accel);
         if !self.settings_open{return;}
         // 旧配置或异常入口可能留下不属于任何分组的标签，回落到「常规」，
         // 保证标题、侧栏选中态与右侧内容始终一致。
@@ -1774,7 +1774,7 @@ impl App {
                             ui.horizontal(|ui|{
                                 ui.label(egui::RichText::new(format!("版本 {}",env!("CARGO_PKG_VERSION"))).size(13.0));
                                 ui.add_space(8.0);
-                                ui.vertical(|ui|self.updates.ui(ui));
+                                ui.vertical(|ui|self.updates.ui(ui,&mut self.settings.update_accel));
                             });
                             ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.horizontal_wrapped(|ui|{

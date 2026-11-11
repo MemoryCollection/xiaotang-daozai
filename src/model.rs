@@ -290,6 +290,8 @@ pub struct Settings {
     pub pet: bool,
     pub minimal: bool,
     pub browser_minimal: bool,
+    /// 自动避让「靠近才收细线」：应用在前台遮住岛时先保持原样，鼠标移到岛附近才临时收成细线。
+    pub avoid_dodge: bool,
     pub avoid_browsers: bool,
     pub avoid_apps: Vec<(String,String)>,
     pub visible_pages: [bool; 9],
@@ -338,11 +340,13 @@ pub struct Settings {
     pub clipboard_history: bool,
     /// 天气页要看的城市；留空表示按网络出口自动定位。
     pub weather_city: String,
+    /// 更新包下载加速前缀，例如 `https://gh.6qu.top/?pw=…`；留空直连 GitHub。
+    pub update_accel: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_battery: true, clock_12h: false, clock_period: 0, clock_seconds: false, hover_expand: true, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_dodge: false, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_battery: true, clock_12h: false, clock_period: 0, clock_seconds: false, hover_expand: true, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), update_accel: String::new() }
     }
 }
 
@@ -399,6 +403,7 @@ impl Settings {
                 "pet" => s.pet = v == "1" || v.eq_ignore_ascii_case("true"),
                 "minimal" => s.minimal = v == "1" || v.eq_ignore_ascii_case("true"),
                 "browser_minimal" => s.browser_minimal = v == "1",
+                "avoid_dodge" => s.avoid_dodge = v == "1",
                 "avoid_browsers" => s.avoid_browsers = v != "0",
                 "avoid_apps" => s.avoid_apps = serde_json::from_str(&v).unwrap_or_default(),
                 "resident_order" => {
@@ -455,6 +460,7 @@ impl Settings {
                 "calendar_auto_sync" => s.calendar_auto_sync = v != "0",
                 "clipboard_history" => s.clipboard_history = v != "0",
                 "weather_city" => s.weather_city = v.trim().to_string(),
+                "update_accel" => s.update_accel = v.trim().to_string(),
                 _ => {}
             }
         }
@@ -477,6 +483,7 @@ impl Settings {
                 ("pet".into(), if self.pet { "1".to_string() } else { "0".to_string() }),
                 ("minimal".into(), if self.minimal { "1".to_string() } else { "0".to_string() }),
                 ("browser_minimal".into(), (self.browser_minimal as u8).to_string()),
+                ("avoid_dodge".into(), (self.avoid_dodge as u8).to_string()),
                 ("avoid_browsers".into(), (self.avoid_browsers as u8).to_string()),
                 ("avoid_apps".into(), serde_json::to_string(&self.avoid_apps).unwrap_or_default()),
                 ("visible_pages".into(), self.visible_pages.iter().map(|enabled|if *enabled {'1'}else{'0'}).collect()),
@@ -517,6 +524,7 @@ impl Settings {
                 ("calendar_auto_sync".into(), (self.calendar_auto_sync as u8).to_string()),
                 ("clipboard_history".into(), (self.clipboard_history as u8).to_string()),
                 ("weather_city".into(), self.weather_city.clone()),
+                ("update_accel".into(), self.update_accel.clone()),
             ],
         );
     }

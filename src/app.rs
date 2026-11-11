@@ -63,6 +63,8 @@ pub(crate) const QUIET_PAGES: [usize; 3] = [0, 1, 2];
 /// 悬停意图缓冲：光标停留这么久才真正展开（期间药丸轻微胀大作为反馈），防误触。
 const HOVER_INTENT: f64 = 0.20;
 const MINIMAL_HOVER_INTENT: f64 = 0.40;
+/// 自动避让「靠近才收细线」的判定半径（逻辑点）：鼠标进入岛体外围这么多距离就临时收起。
+const DODGE_NEAR: f32 = 36.0;
 /// 移开后等待多久开始收起；这段时间内回来不会收。
 const LEAVE_DELAY: f64 = 0.12;
 const SWELL: (f32, f32) = (1.075, 1.13);
@@ -1551,10 +1553,15 @@ impl App {
             let target=if self.settings.skin==model::Skin::GlassLight {glass::light_tint(env.backdrop,env.glass_blur)}else{glass::glass_tint(env.backdrop,env.glass_blur)};
             self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
         }
-        let browser_minimal=self.settings.browser_minimal && self.browser_at_top;
+        // 「靠近才收细线」：应用在前台遮住岛时先保持原样，只有鼠标移到岛附近才临时收成细线避让。
+        let dodge_near = !self.settings.avoid_dodge || env.cursor.is_some_and(|cursor| {
+            self.island_rect(win,self.w.pos,self.h.pos).expand(DODGE_NEAR).contains(cursor)
+        });
+        let browser_minimal=self.settings.browser_minimal && self.browser_at_top && dodge_near;
         if browser_minimal && !self.browser_minimal_active {
             self.open=false;
-            self.hover_lock=true;
+            // 靠近避让是鼠标触发的收起，不能再锁悬停，否则移到细线上也无法展开。
+            if !self.settings.avoid_dodge {self.hover_lock=true;}
             self.hover_since=None;
             self.leave_since=None;
             self.forced_open_until=0.0;
