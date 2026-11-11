@@ -1,7 +1,7 @@
 //! 左右停靠：岛体贴在屏幕左 / 右边缘，收起时是竖向胶囊，展开后面板从边缘滑出。
 //!
 //! 展开后的页面内容与顶部停靠完全相同（419 × 140 的横向面板），只是锚点换到侧边；
-//! 收起态换成竖排：时间（时 / 分两行）、电池、播放状态、专注倒计时、通知铃铛。
+//! 收起态换成竖排：时间（时 / 分两行）、电池、正在播放的音乐、通知铃铛。
 //! AI 额度竖排：环形额度一行一个，余额类图标在上、金额在下。
 //! 吉祥物和岛上歌词是横向内容，侧边停靠时不显示。
 
@@ -40,8 +40,8 @@ impl App {
     pub(crate) fn side_items(&self) -> Vec<SideItem> {
         let mut items = vec![SideItem::Clock];
         if self.settings.show_battery && self.resident_power.0.is_some() { items.push(SideItem::Battery); }
-        if self.media.is_music() { items.push(SideItem::Music); }
-        if self.pomo.running { items.push(SideItem::Focus); }
+        if self.music_playing() { items.push(SideItem::Music); }
+        // 音乐未播放、专注倒计时条都不再占用悬浮岛；页面、设置与提醒仍保留。
         items.extend(self.quota_side_items().into_iter().map(|(index, h)| SideItem::Quota(index, h)));
         if self.t < self.notification_bell_until { items.push(SideItem::Bell); }
         items

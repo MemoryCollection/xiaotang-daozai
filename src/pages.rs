@@ -335,18 +335,8 @@ impl App {
 
         c.fill(208.0, 36.0, 1.0, 86.0, 0.5, Color32::from_rgb(30, 30, 33));
 
-        // 右侧：环形 ↔ 柱状图（点右侧区域或右上角两颗豆切换）
-        let vt = self.water_view_t.pos;
-        let area = c.hit(214.0, 30.0, 166.0, 96.0, "w-view");
-        if area.clicked() {
-            self.water_view = 1 - self.water_view;
-        }
-        for i in 0..2 {
-            let on = if i == 0 { 1.0 - vt.clamp(0.0, 1.0) } else { vt.clamp(0.0, 1.0) };
-            let w = lerp(3.0, 7.0, on);
-            let x = 362.0 + i as f32 * 8.0 - w / 2.0 + if i == 0 { -1.0 * on } else { 1.0 * on };
-            c.fill(x, 33.5, w, 3.0, 1.5, mix(Color32::from_gray(80), theme::WHITE, on));
-        }
+        // 悬浮岛内不再显示饮水环：右侧固定为柱状图；饮水页、设置与提醒均保留。
+        let vt = 1.0f32;
 
         let ring_a = 1.0 - smoothstep(0.0, 0.6, vt);
         if ring_a > 0.0 {

@@ -1393,6 +1393,10 @@ impl App {
         self.todo_ime_frame=false;
     }
 
+    /// 悬浮岛上的音乐元素只在音乐确实在播放时出现；暂停、切歌间隙或播放器退出时
+    /// 不再占位。音乐页面、歌词获取与媒体状态本身不受影响。
+    pub(crate) fn music_playing(&self)->bool { self.media.playing && self.media.is_music() }
+
     fn island_lyrics_active(&self)->bool {
         if self.side() {return false;}
         self.settings.island_lyrics && self.settings.visible_pages[0] && self.media.is_music()
@@ -1450,7 +1454,8 @@ impl App {
     pub(crate) fn effective_minimal(&self)->bool {self.settings.minimal || self.browser_minimal_active}
     pub(crate) fn pet_enabled(&self)->bool {self.settings.pet && !self.effective_minimal() && !self.side()}
     pub(crate) fn pet_space(&self)->f32 {if self.pet_enabled(){44.0}else{0.0}}
-    fn lyric_focus_space(&self)->f32 {if self.pomo.running{crate::focus_bar::LYRIC_WIDTH+10.0}else{0.0}}
+    // 岛上不再显示专注倒计时条，歌词条也不必为它预留宽度；专注页与设置保留。
+    fn lyric_focus_space(&self)->f32 {0.0}
     fn lyric_bar_width(&self)->f32 {LYRIC_BAR_W+if self.pet_enabled(){48.0}else{0.0}+self.lyric_focus_space()}
     fn notice_size(&self,a:&Alert)->(f32,f32) {
         let (width,height)=if a.meeting.is_some(){(360.0,136.0)}else if a.source==crate::extras::AlertSource::Internal && a.title=="蓝牙设备"{(HUD_W,48.0)}else if a.is_hud(){(HUD_W,38.0)}else{(334.0,44.0)};
@@ -1568,7 +1573,8 @@ impl App {
         self.update_media(env,&ctx);
         let bell=self.t<self.notification_bell_until&&!self.compact_notices();
         self.resident_power=(env.battery,env.charging);
-        let mut layout=Layout::new(self.settings.show_battery&&env.battery.is_some(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());
+        // 音乐播放条只在播放时占位；专注倒计时条不再出现在悬浮岛（页面、设置与提醒仍保留）。
+        let mut layout=Layout::new(self.settings.show_battery&&env.battery.is_some(),self.quota_bar_indices().len(),self.music_playing()&&!bell,false,bell,self.pet_enabled(),self.weather_pill().is_some());
         layout.reorder(&self.settings.resident_order);
         for (position,extra) in self.quota_balance_layout(&ctx){layout.balance_tail(position,extra);}
         if self.settings.clock_period!=0 { layout.widen_clock(40.0); }
@@ -2309,10 +2315,7 @@ impl App {
             let position=c.pos(left+content_width-LYRIC_BAR_W/2.0,center_y-galley.size().y/2.0+(1.0-fade)*3.0);
             c.painter.galley(position,galley,if lyric.is_some(){theme::WHITE}else{theme::GRAY});
             paint::playback_bars(&c,left+content_width-21.0,center_y,self.t,self.media.playing,theme::WHITE);
-            if self.pomo.running {
-                let alpha=smoothstep(0.88,1.0,(width-content_width)/self.lyric_focus_space());
-                crate::focus_bar::draw(&c.faded(alpha),left+width-14.0-crate::focus_bar::LYRIC_WIDTH/2.0,center_y,self.t,&self.pomo,self.phase_secs(self.pomo.phase),true);
-            }
+            // 专注倒计时条不再出现在岛上；专注页、设置与提醒保留。
         }
         if lyric_alpha>=0.997 {return;}
         let header=base.faded(1.0-lyric_alpha);
@@ -2333,7 +2336,7 @@ impl App {
         let hd = gx + battery_space;
         let hc = hd + date_w + 8.0;
         // 药丸起点布局
-        let has_music=self.media.is_music();
+        let has_music=self.music_playing();
         let layout=self.resident.current();
         let pb=(local_cx+layout.x[bar::BATTERY].unwrap_or(0.0),15.0);
         let pcx=local_cx+layout.x[bar::CLOCK].unwrap()-paint::clock_width(base,&clock,size::PILL_CLOCK)/2.0;
@@ -2374,9 +2377,7 @@ impl App {
             self.draw_quota_bar(&c,local_cx,&layout);
             if let Some(x)=layout.x[bar::WEATHER] { self.draw_pill_weather(&c,local_cx+x,&layout); }
         }
-        if self.pomo.running && compact_alpha>0.004 {
-            crate::focus_bar::draw(&base.faded(compact_alpha),local_cx+layout.x[bar::FOCUS].unwrap(),15.0,self.t,&self.pomo,self.phase_secs(self.pomo.phase),false);
-        }
+        // 专注倒计时条不再常驻悬浮岛，避免占用时钟与天气的位置。
     }
 
     /// 常驻内容：顶部停靠走共享元素过渡（药丸里的电池、时钟飞到顶栏）；

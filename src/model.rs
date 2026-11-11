@@ -1,15 +1,18 @@
 ﻿//! 持久化与状态模型。
 //!
-//! 便携版：配置与程序放在同一目录（安装目录 / 解压目录），拷走整个文件夹即带走全部数据：
-//!   <程序目录>\settings.txt   -> pet=0/1, minimal=0/1
-//!   <程序目录>\todo.txt
-//!   <程序目录>\water.txt      -> bottle=<ml> / goal=<ml> / start=YYYY-MM-DD
-//!   <程序目录>\shelf.txt      -> 置物清单（每行一个绝对路径）
+//! 便携版：配置统一放在安装目录的 `data` 子文件夹，拷走整个文件夹即带走全部数据：
+//!   <程序目录>\data\settings.txt   -> pet=0/1, minimal=0/1
+//!   <程序目录>\data\todo.txt
+//!   <程序目录>\data\water.txt      -> bottle=<ml> / goal=<ml> / start=YYYY-MM-DD
+//!   <程序目录>\data\shelf.txt      -> 置物清单（每行一个绝对路径）
+//!   <程序目录>\data\diagnostics\  -> 诊断日志；歌词与凭据缓存也在 data 下
 //!
 //! 程序目录不可写（例如装进 Program Files）时退回 `%APPDATA%\Daozai`。
-//! 首次以便携方式启动时，会把旧的 `%APPDATA%\Daozai` 内容迁移过来，旧用户设置不丢。
-//! 设置环境变量 `DAOZAI_DATA_DIR` 可把以上目录整体改到别处（用于与已安装的
-//! 原工具并存、或跑测试时不碰真实数据）。
+//! 升级时会把旧版散落在程序目录根下的岛仔数据收进 `data`，再按需迁移更早的
+//! `%APPDATA%\Daozai`，旧用户设置不丢。用户自行放进安装目录的文件保持原位，
+//! 置物架记录的是绝对路径，移动它们会让条目失效。
+//! 设置环境变量 `DAOZAI_DATA_DIR` 可把数据目录整体改到别处（该变量直接指向数据
+//! 根目录，不会再追加 `data`；用于与已安装的原工具并存、或跑测试时不碰真实数据）。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,11 +40,41 @@ fn writable(dir: &Path) -> bool {
     }
 }
 
-/// 把旧的 `%APPDATA%\Daozai` 内容搬进程序目录：逐个复制，全部成功才删旧目录，
+/// 安装目录下统一存放用户数据的子目录名。
+const DATA_DIR_NAME: &str = "data";
+/// v0.6.68 及更早版本把数据文件直接散落在程序目录根下。升级时只搬岛仔自己
+/// 生成的文件，用户自行放进安装目录的文件保持原位（置物架记的是绝对路径）。
+const ROOT_DATA_FILES: &[&str] = &[
+    "settings.txt", "todo.txt", "water.txt", "water-extra.txt",
+    "shelf.txt", "shelf-hidden.txt", "calendar.json", "local-calendar.json",
+    "clipboard.json", "mail-accounts.json", "mail-local-state.json",
+    "notification-apps.json", "ai-quota.json", "ai-quota-cache.json",
+    "weather.json", "kugou-control.json", "glass-diagnostics.txt",
+];
+const ROOT_DATA_DIRS: &[&str] = &["diagnostics", "lyrics", "credentials"];
+
+/// 把旧的 `%APPDATA%\Daozai` 内容搬进数据目录：逐个复制，全部成功才删旧目录，
 /// 避免迁移中断时丢数据。调试构建（target 目录里跑）不做迁移，免得搬走开发机的真实数据。
 fn migrate_legacy(legacy: &Path, dir: &Path) {
     if cfg!(debug_assertions) || !legacy.is_dir() || dir.join("settings.txt").exists() { return; }
     if copy_tree(legacy, dir) { let _ = fs::remove_dir_all(legacy); }
+}
+
+/// 把程序目录根下散落的岛仔数据收进 `data`：优先原地改名（同分区，瞬间完成），
+/// 失败时退化为复制并保留原文件；目标已存在则跳过，data 里手工改过的配置不被旧文件覆盖。
+fn migrate_program_root(root: &Path, dir: &Path) {
+    for &name in ROOT_DATA_FILES.iter().chain(ROOT_DATA_DIRS.iter()) {
+        let source = root.join(name);
+        let target = dir.join(name);
+        if !source.exists() || target.exists() { continue; }
+        if fs::rename(&source, &target).is_err() {
+            if source.is_dir() {
+                if fs::create_dir_all(&target).is_ok() { let _ = copy_tree(&source, &target); }
+            } else {
+                let _ = fs::copy(&source, &target);
+            }
+        }
+    }
 }
 
 fn copy_tree(from: &Path, to: &Path) -> bool {
@@ -60,9 +93,16 @@ fn copy_tree(from: &Path, to: &Path) -> bool {
 }
 
 fn program_config_dir() -> PathBuf {
-    let Some(dir) = program_dir() else { return legacy_dir(); };
-    if !writable(&dir) { return legacy_dir(); }
-    migrate_legacy(&legacy_dir(), &dir);
+    let Some(root) = program_dir() else { return legacy_dir(); };
+    if !writable(&root) { return legacy_dir(); }
+    let dir = root.join(DATA_DIR_NAME);
+    if fs::create_dir_all(&dir).is_err() || !writable(&dir) { return legacy_dir(); }
+    if !cfg!(debug_assertions) {
+        // 先搬当前正在用的程序目录数据，再考虑更早的 %APPDATA% 数据；后者
+        // 会因 settings.txt 已存在而自动跳过，不会用旧设置覆盖当前设置。
+        migrate_program_root(&root, &dir);
+        migrate_legacy(&legacy_dir(), &dir);
+    }
     dir
 }
 
@@ -843,6 +883,26 @@ pub fn human_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn program_root_data_moves_into_data_dir_without_touching_user_files() {
+        let root=std::env::temp_dir().join(format!("daozai-migrate-root-{}",std::process::id()));
+        let _=fs::remove_dir_all(&root);
+        let data=root.join(DATA_DIR_NAME);
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(root.join("diagnostics")).unwrap();
+        fs::write(root.join("diagnostics").join("lyrics.log"),"log").unwrap();
+        fs::write(root.join("settings.txt"),"pet=1\n").unwrap();
+        fs::write(root.join("todo.txt"),"买牛奶\n").unwrap();
+        fs::write(root.join("我的文件.txt"),"保留").unwrap();
+        fs::write(data.join("settings.txt"),"pet=0\n").unwrap();
+        migrate_program_root(&root,&data);
+        assert_eq!(fs::read_to_string(data.join("todo.txt")).unwrap(),"买牛奶\n");
+        assert_eq!(fs::read_to_string(data.join("settings.txt")).unwrap(),"pet=0\n","data 里已有的配置优先，不被旧文件覆盖");
+        assert_eq!(fs::read_to_string(data.join("diagnostics").join("lyrics.log")).unwrap(),"log");
+        assert!(root.join("我的文件.txt").exists(),"用户自行放入的文件必须留在原位");
+        let _=fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn island_appearance_values_are_normalized() {

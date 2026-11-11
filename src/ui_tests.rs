@@ -831,6 +831,21 @@ fn minimal_mode_stays_a_line_with_music_and_after_media_changes(){
 }
 
 #[test]
+fn island_music_widget_only_follows_playing_media(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.media=crate::smtc::NowPlaying{title:"Track".into(),artist:"Artist".into(),playing:true,duration:120.0,..Default::default()};
+    h.frame(vec![]);
+    assert!(h.app.music_playing(),"播放中的音乐应计入悬浮岛元素");
+    assert!(crate::bar_layout::Layout::new(false,0,true,false,false,false,false).x[crate::bar_layout::MUSIC].is_some());
+    h.media.playing=false;h.frame(vec![]);
+    assert!(!h.app.music_playing(),"暂停后悬浮岛不再显示音乐");
+    assert!(crate::bar_layout::Layout::new(false,0,false,false,false,false,false).x[crate::bar_layout::MUSIC].is_none(),"暂停后音乐槽不占位");
+    h.media=Default::default();h.frame(vec![]);
+    assert!(!h.app.music_playing(),"播放器退出后不再显示音乐");
+}
+
+#[test]
 fn toggling_minimal_changes_the_island_while_media_is_present(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.media=crate::smtc::NowPlaying{title:"Track".into(),artist:"Artist".into(),playing:true,duration:120.0,..Default::default()};

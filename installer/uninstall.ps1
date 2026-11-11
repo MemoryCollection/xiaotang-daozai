@@ -15,4 +15,4 @@ foreach($name in @('daozai.exe','daozai-previous.exe','daozai-v0.2-backup.exe','
     $path=Join-Path $installDir $name;if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}
 }
 if(-not(Get-ChildItem -LiteralPath $installDir -Force)){Remove-Item -LiteralPath $installDir}
-Write-Output '岛仔已卸载。待办、饮水记录和设置仍保存在本机用户数据目录中。'
+Write-Output '岛仔已卸载。设置、待办和饮水记录仍保留在安装目录的 data 文件夹中。'

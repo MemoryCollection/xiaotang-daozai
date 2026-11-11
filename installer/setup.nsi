@@ -170,6 +170,10 @@ Function EnsureOwnFolder
   ${If} ${FileExists} "$INSTDIR\daozai.exe"
     Return
   ${EndIf}
+  ; 只留下 data 数据目录时重装，也应回到原安装位置，不要再套一层 Daozai。
+  ${If} ${FileExists} "$INSTDIR\data"
+    Return
+  ${EndIf}
   ClearErrors
   FindFirst $1 $2 "$INSTDIR\*.*"
   ${DoWhile} $2 != ""

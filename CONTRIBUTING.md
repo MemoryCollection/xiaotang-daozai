@@ -11,7 +11,7 @@ cargo build --locked --bin daozai
 cargo test --locked --all-targets --features record -- --test-threads=1
 ```
 
-为开发实例指定独立目录，避免覆盖日常使用数据：
+为开发实例指定独立目录，避免覆盖日常使用数据。`DAOZAI_DATA_DIR` 直接指向数据根目录，不会再追加 `data`；正式版默认使用安装目录下的 `data` 子文件夹：
 
 ```powershell
 $env:DAOZAI_DATA_DIR = Join-Path $env:TEMP 'daozai-development'
