@@ -1284,7 +1284,8 @@ impl App {
 
     pub fn show_page(&mut self,page:usize) {
         if !self.settings.visible_pages[page] {
-            self.settings_tab=[1,2,3,5,4,7,11,8][page];
+            // 与 PAGE_NAMES 一一对应（含第 9 个天气页），隐藏页面打开设置时不能越界。
+            self.settings_tab=[1,2,3,5,4,7,11,8,12][page];
             self.open_settings();
             return;
         }

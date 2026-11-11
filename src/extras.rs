@@ -1052,6 +1052,31 @@ const SETTINGS_GROUPS: [(&str,usize,usize);9] = [
     ("常规",0,0), ("页面管理",10,10), ("音乐与歌词",1,1), ("专注与饮水",2,3),
     ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("AI 额度",11,11), ("天气",12,12), ("关于",9,9),
 ];
+/// 设置窗口初始尺寸（逻辑点），居中计算与窗口创建共用，避免两处不一致。
+fn settings_size()->egui::Vec2 { egui::vec2(690.0,560.0) }
+
+/// 首次打开设置窗口时把它摆到主屏中心。之后不再发送位置命令，用户拖动、
+/// 调整大小或系统记住的位置都保留；取不到屏幕信息时维持系统默认位置。
+fn settings_center_position(ctx:&egui::Context)->Option<egui::Pos2> {
+    let size=settings_size();
+    if let Some(monitor)=ctx.input(|i|i.viewport().monitor_size) {
+        if monitor.x>size.x && monitor.y>size.y {
+            return Some(egui::pos2((monitor.x-size.x)/2.0,(monitor.y-size.y)/2.0));
+        }
+    }
+    let scale=ctx.pixels_per_point().max(0.5);
+    let displays=crate::display_layout::connected();
+    if let Some(m)=crate::display_layout::selected(&displays,"") {
+        let left=m.bounds.left as f32/scale;
+        let top=m.bounds.top as f32/scale;
+        let width=(m.bounds.right-m.bounds.left) as f32/scale;
+        let height=(m.bounds.bottom-m.bounds.top) as f32/scale;
+        if width>size.x && height>size.y {
+            return Some(egui::pos2(left+(width-size.x)/2.0,top+(height-size.y)/2.0));
+        }
+    }
+    None
+}
 
 impl App {
     pub fn settings_ui(&mut self,ctx:&egui::Context,autostart:bool){
@@ -1059,9 +1084,14 @@ impl App {
         self.updates.poll(ctx);
         self.updates.dialog_ui(ctx);
         if !self.settings_open{return;}
+        // 旧配置或异常入口可能留下不属于任何分组的标签，回落到「常规」，
+        // 保证标题、侧栏选中态与右侧内容始终一致。
+        if !SETTINGS_GROUPS.iter().any(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)) {
+            self.settings_tab=0;
+        }
         let id=egui::ViewportId::from_hash_of("daozai-settings");
         let focus_requested=std::mem::take(&mut self.settings_focus_requested);
-        ctx.show_viewport_immediate(id,egui::ViewportBuilder::default().with_title("岛仔设置").with_icon(theme::app_icon()).with_inner_size([690.0,560.0]).with_min_inner_size([600.0,450.0]).with_visible(false).with_active(false).with_window_level(egui::WindowLevel::Normal),|ctx,_|{
+        ctx.show_viewport_immediate(id,egui::ViewportBuilder::default().with_title("岛仔设置").with_icon(theme::app_icon()).with_inner_size(settings_size()).with_min_inner_size([600.0,450.0]).with_visible(false).with_active(false).with_window_level(egui::WindowLevel::Normal),|ctx,_|{
             let dark=self.settings.settings_theme.dark(crate::settings_theme::system_dark(ctx));
             let original_style=ctx.style();
             let mut style=(*original_style).clone();
@@ -1072,6 +1102,11 @@ impl App {
                 ctx.request_repaint_after(std::time::Duration::from_secs(1));
             }
             if focus_requested {
+                // 先摆到主屏中心再显示，避免左上角闪一下；只在打开时执行一次，
+                // 之后用户拖动或调整大小都不会被拉回。
+                if let Some(pos)=settings_center_position(ctx) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+                }
                 // Glow 在首帧交换缓冲后执行窗口命令，避免先显示白色空窗口。
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -1131,7 +1166,15 @@ impl App {
                 }
                 ui.visuals_mut().selection.bg_fill=settings_color(ctx,Color32::from_rgb(45,105,165),Color32::from_rgb(209,226,248));
                 let titles=["常规","音乐与歌词","专注","饮水","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","天气"];
-                ui.label(egui::RichText::new(titles[self.settings_tab.min(12)]).size(18.0).strong().color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))));
+                let title=titles[self.settings_tab.min(12)];
+                let group=SETTINGS_GROUPS.iter().find(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)).map(|(name,_,_)|*name).unwrap_or("常规");
+                // 标题标出「当前页 · 所属分组」，多标签分组（如专注与饮水）不再让人迷失层级。
+                ui.horizontal(|ui|{
+                    ui.label(egui::RichText::new(title).size(18.0).strong().color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))));
+                    if group!=title {
+                        ui.label(egui::RichText::new(format!("· {group}")).size(12.0).color(settings_color(ctx,Color32::from_gray(165),Color32::from_gray(95))));
+                    }
+                });
                 if let Some((_,start,end))=SETTINGS_GROUPS.iter().find(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)) {
                     if start!=end {
                         ui.add_space(7.0);
