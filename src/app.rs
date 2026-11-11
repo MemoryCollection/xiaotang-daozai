@@ -1479,6 +1479,25 @@ impl App {
         }
     }
 
+    /// 挂在胶囊右侧、但不计入 `base_size()` 的常驻元素总宽。
+    /// 微信/QQ 未读条与紧凑通知条都向右延伸，只按胶囊宽度居中会让整组偏右。
+    fn side_attachment_width(&self) -> f32 {
+        if self.side() { return 0.0; }
+        let mut extra = self.notice_width.pos;
+        if self.pending_messengers.is_empty() || self.browser_minimal_active && !self.open { return extra; }
+        // 完整横幅已带来源图标时不再挂未读条，与 messenger_badge_rect 保持一致。
+        if !self.open && !self.compact_notices() && self.pending_messengers.len()==1
+            && self.notice.as_ref().and_then(|a|a.messenger())==self.pending_messengers.first().map(|u|u.source) { return extra; }
+        if self.open {
+            let appear=self.messenger_appear();
+            if appear>0.02 { extra+=(UNREAD_W+UNREAD_GAP)*appear; }
+        } else if !self.effective_minimal() {
+            let scale=self.messenger_stack_appear();
+            if scale>0.02 { extra+=self.unread_stack_len(true)*scale; }
+        }
+        extra
+    }
+
     /// 0 = 药丸，1 = 完整面板（展开时可略超过 1）。
     #[cfg(test)]
     pub(crate) fn current_width(&self) -> f32 { self.w.pos+self.notice_width.pos }
@@ -1553,6 +1572,7 @@ impl App {
         layout.reorder(&self.settings.resident_order);
         for (position,extra) in self.quota_balance_layout(&ctx){layout.balance_tail(position,extra);}
         if self.settings.clock_period!=0 { layout.widen_clock(40.0); }
+        if self.settings.clock_seconds { layout.widen_clock(bar::CLOCK_SECONDS_EXTRA); }
         if let Some(extra)=self.weather_pill_extra(&ctx){ layout.widen(bar::WEATHER,extra); }
         if self.pet_enabled() {
             if let Some(a)=self.notice.as_ref().filter(|_|!self.compact_notices()&&!self.open){layout.x[bar::PET]=Some(22.0-(self.notice_size(a).0+self.pet_space())/2.0);}
@@ -1564,6 +1584,12 @@ impl App {
         }
         self.update_island_lyric_layout(&ctx);
 
+        // 微信/QQ 未读条与紧凑通知条挂在胶囊右侧，不计入 base_size()；只按胶囊
+        // 自身宽度居中会让整组视觉重心右移。先估算挂件总宽，把岛体左移一半，
+        // 使「胶囊 + 右侧挂件」的联合包围盒重新以屏幕中心为轴。
+        let window_origin = win.min;
+        let attached = self.side_attachment_width();
+        let win = if attached > 0.5 { win.translate(Vec2::new(-attached * 0.5, 0.0)) } else { win };
         let cx = win.center().x;
         // 胶囊皮肤悬浮在屏幕顶边下方。
         let pill = self.settings.island_shape==model::IslandShape::Pill;
@@ -1819,7 +1845,8 @@ impl App {
         if self.calendar.draft.is_some() && reveal>0.9 {self.calendar_editor_inputs(ui,origin,&mut cmds);}
 
         // ---------- 输出 ----------
-        let rel = |r: Rect| r.translate(-win.min.to_vec2());
+        // native 的区域/命中以真实窗口左上角为基准；岛体整体左移后不能跟着改基准。
+        let rel = |r: Rect| r.translate(-window_origin.to_vec2());
         let mut region = if side {
             // 侧边：面板从边缘滑出，区域包含肩部（沿边缘上下）与外侧阴影，并一直延伸到屏幕边缘。
             let r=if p > 0.02 || self.open {

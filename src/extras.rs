@@ -1293,6 +1293,8 @@ impl App {
                             settings_control_row_right(ui,"时间制式",|ui|{settings_segmented(ui,&mut self.settings.clock_12h,&[(false,"24 小时"),(true,"12 小时")],72.0);});
                             settings_control_row_right(ui,"时段文字",|ui|{settings_segmented(ui,&mut self.settings.clock_period,&[(0,"不显示"),(1,"上午 / 下午"),(2,"详细时段")],72.0);});
                             settings_hint(ui,"详细时段：凌晨、上午、中午、下午、傍晚、晚上");
+                            settings_control_row_right(ui,"显示秒",|ui|{settings_segmented(ui,&mut self.settings.clock_seconds,&[(false,"不显示"),(true,"显示")],72.0);});
+                            settings_hint(ui,"开启后时间显示为 小时:分钟:秒，常驻栏会自动加宽");
                             ui.separator();
                             let mut minimal=self.settings.minimal;
                             setting_row(ui,"极简刘海","收起时显示一条细线",&mut minimal);

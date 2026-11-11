@@ -15,6 +15,8 @@ pub(crate) const BELL: usize = 8;
 pub(crate) const PET: usize = 9;
 /// 天气徽标的基础槽宽；温度文字更长时由 `widen` 补足。
 pub(crate) const WEATHER_WIDTH: f32 = 38.0;
+/// 显示秒时时钟文本多出的 `:SS` 宽度，用于给常驻栏对称让位。
+pub(crate) const CLOCK_SECONDS_EXTRA: f32 = 26.0;
 const WIDTHS: [f32; 10] = [44.0,20.0,27.0,27.0,27.0,WEATHER_WIDTH,14.0,crate::focus_bar::WIDTH,20.0,32.0];
 
 pub(crate) const DEFAULT_ORDER: [usize;6]=[BATTERY,PET,CLOCK,QUOTA,MUSIC,FOCUS];

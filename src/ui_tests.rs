@@ -4635,6 +4635,29 @@ fn clock_12h_formats_boundaries_and_persists() {
 }
 
 #[test]
+fn clock_seconds_are_optional_and_persist() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    assert!(!h.app.settings.clock_seconds);
+    assert_eq!(h.app.settings.clock_text("09:41:07"),"09:41");
+    h.app.settings.clock_seconds=true;
+    assert_eq!(h.app.settings.clock_text("09:41:07"),"09:41:07");
+    assert_eq!(h.app.settings.clock_text("23:59"),"23:59:00");
+    h.app.settings.clock_12h=true;
+    assert_eq!(h.app.settings.clock_text("00:00:05"),"12:00:05");
+    h.app.settings.clock_period=1;
+    assert_eq!(h.app.settings.clock_text("13:05:09"),"下午 1:05:09");
+    h.app.settings.save();
+    assert!(crate::model::Settings::load().clock_seconds);
+    // 恢复默认，避免污染后续读取真实设置的用例。
+    h.app.settings.clock_seconds=false;
+    h.app.settings.clock_12h=false;
+    h.app.settings.clock_period=0;
+    h.app.settings.save();
+    assert!(!crate::model::Settings::load().clock_seconds);
+}
+
+#[test]
 fn clock_period_boundaries_and_both_formats() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();
