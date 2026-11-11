@@ -2514,7 +2514,7 @@ impl App {
             for source in self.tray_sources() {
                 let unread=self.pending_messengers.iter().any(|item|item.source==source);
                 // 呼吸：未读时亮度 55%~100% 缓慢起伏；平时常亮，不压暗。
-                let alpha=appear*(if unread {0.55+0.45*(0.5+0.5*(self.t*2.2).sin())}else{1.0});
+                let alpha=appear*(if unread {(0.55+0.45*(0.5+0.5*(self.t*2.2).sin())) as f32}else{1.0});
                 crate::extras::messenger_icon(&base.scaled(x,15.0,0.9).faded(alpha),x,15.0,source);
                 if unread {base.circle(x+8.0,6.5,2.4,Color32::from_rgb(255,72,72));}
                 let button=base.hit(x-10.0,5.0,20.0,20.0,("tray-icon",source.name())).on_hover_text(format!("打开{}",source.name()));
