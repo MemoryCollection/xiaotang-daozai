@@ -155,11 +155,6 @@ pub fn client_running(source:crate::app::Messenger)->bool{
     }
 }
 
-/// 客户端的可执行文件（托盘图标从它身上取），取不到返回 `None`。
-pub(crate) fn client_exe(source:crate::app::Messenger)->Option<String>{
-    client_paths(source).into_iter().find(|path|!path.contains('*') && std::path::Path::new(path).is_file())
-}
-
 fn client_main_frame(source:crate::app::Messenger,class:&str,style:u32,extended:u32)->bool{
     let known=match source {
         crate::app::Messenger::Qq=>matches!(class,"Chrome_WidgetWin_1"|"TXGuiFoundation"),

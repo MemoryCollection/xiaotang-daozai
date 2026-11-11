@@ -4896,11 +4896,13 @@ fn wechat_notifications_work_without_toast_permission_and_stop_when_disabled(){
     h.app.settings.save();assert!(crate::model::Settings::load().wechat_notifications);
     assert!(!h.app.settings.read_notifications);
     h.app.receive_wechat_reminder();h.app.tick_alerts();
-    let notice=h.app.notice.as_ref().unwrap();
-    assert_eq!(notice.title,"微信");assert_eq!(notice.body,"有新消息 · 请到微信查看");
+    // 新消息不再弹横幅，只由胶囊托盘图标的未读状态表达。
+    assert!(h.app.notice.is_none());assert!(h.app.alerts.is_empty());
+    assert!(h.app.pending_messengers.iter().any(|u|u.source==crate::app::Messenger::Wechat));
     assert!(h.app.history.is_empty());
     assert!(!h.app.pending.iter().any(|c|matches!(c,crate::app::Cmd::Notify(..))));
-    h.app.settings.wechat_notifications=false;h.app.tick_alerts();assert!(h.app.notice.is_none());
+    h.app.settings.wechat_notifications=false;h.app.tick_alerts();
+    assert!(h.app.pending_messengers.is_empty(),"来源关闭后未读应清空");
     h.app.settings.wechat_notifications=true;h.app.settings.notifications=false;
     h.app.receive_wechat_reminder();assert!(h.app.alerts.is_empty());
 }

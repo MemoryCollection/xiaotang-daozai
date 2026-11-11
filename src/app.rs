@@ -65,9 +65,6 @@ const HOVER_INTENT: f64 = 0.20;
 const MINIMAL_HOVER_INTENT: f64 = 0.40;
 /// 自动避让「靠近才收细线」的判定半径（逻辑点）：鼠标进入岛体外围这么多距离就临时收起。
 const DODGE_NEAR: f32 = 36.0;
-/// 收起后的恢复半径（比 DODGE_NEAR 大）：留出这段滞后带，鼠标在范围边缘来回
-/// 移动不会「收 → 展 → 收」地抖。
-const DODGE_EXIT: f32 = 24.0;
 /// 移开后等待多久开始收起；这段时间内回来不会收。
 const LEAVE_DELAY: f64 = 0.12;
 const SWELL: (f32, f32) = (1.075, 1.13);
@@ -712,12 +709,8 @@ pub struct App {
     notice_details: bool,
     pub pending_messengers:Vec<Unread>,
     messenger_scroll: f32,
-    /// 胶囊上常驻托盘图标的闪烁截止时间：来新消息时亮起来闪一会儿。
-    pub(crate) messenger_blink_until: f64,
     /// 正在运行的客户端（微信 / QQ），由外壳每几秒刷新一次。
     pub(crate) clients:[bool;2],
-    /// 托盘图标的纹理（按 `Messenger::index()`），加载失败时留 None 改画矢量图标。
-    tray_texture:std::collections::HashMap<usize,Option<egui::TextureHandle>>,
     pub(crate) alerts: std::collections::VecDeque<Alert>,
     pub(crate) history: std::collections::VecDeque<Alert>,
     pub(crate) pending: Vec<Cmd>,
@@ -838,7 +831,7 @@ impl App {
             music_artwork: None,
             forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
-            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, messenger_blink_until:0.0, clients:[false;2], tray_texture:Default::default(), alerts: Default::default(), history: Default::default(), pending: vec![],
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, clients:[false;2], alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
             toast: None, toast_below: false,
             last_input: 0.0, system_idle: None,
@@ -1590,11 +1583,16 @@ impl App {
             true
         } else {
             let rect = self.dodge_rect(win);
-            // 已经收起时用更大的恢复半径，边界上不会反复收/展。
-            let reach = if self.browser_minimal_active { DODGE_NEAR + DODGE_EXIT } else { DODGE_NEAR };
             env.cursor.is_some_and(|cursor| {
-                // 光标已经落在岛上：不再避让，恢复胶囊（细线本身很窄，只判细线会很难点中）。
-                if rect.contains(cursor) { false } else { rect.expand(reach).contains(cursor) }
+                if self.browser_minimal_active {
+                    // 已收成细线：鼠标必须压在线上才恢复，在附近不恢复——
+                    // 否则线周围一晃就会弹出胶囊，标签栏没法点。
+                    let line=self.island_rect(win,self.w.pos,self.h.pos);
+                    !line.expand(2.5).contains(cursor)
+                } else {
+                    // 还没收起：光标进入胶囊周边才开始避让。
+                    if rect.contains(cursor) { false } else { rect.expand(DODGE_NEAR).contains(cursor) }
+                }
             })
         };
         if browser_minimal && !self.browser_minimal_active {
@@ -1606,8 +1604,8 @@ impl App {
             self.forced_open_until=0.0;
         }
         self.browser_minimal_active=browser_minimal;
-        // 托盘图标闪烁期间保持刷新，否则没有输入时画面会停在一帧上。
-        if self.t < self.messenger_blink_until { ctx.request_repaint(); }
+        // 托盘图标呼吸期间保持低频刷新，否则没有输入时画面会停在一帧上。
+        if !self.pending_messengers.is_empty() { ctx.request_repaint_after(std::time::Duration::from_millis(120)); }
         if !self.started {
             self.started = true;
             self.last_input = env.t;
@@ -2107,19 +2105,6 @@ impl App {
         if count<=0.0 {0.0} else {count*TRAY_STEP+4.0}
     }
 
-    /// 托盘图标纹理：第一次用到时从客户端 exe 取图标并上传，取不到返回 None（改画矢量图标）。
-    fn tray_texture_for(&mut self,ctx:&egui::Context,source:Messenger)->Option<egui::TextureHandle>{
-        if let Some(cached)=self.tray_texture.get(&source.index()) {return cached.clone();}
-        #[cfg(windows)]
-        let image=crate::wechat::client_exe(source)
-            .and_then(|path|crate::icons::exe_icon(std::path::Path::new(&path)));
-        #[cfg(not(windows))]
-        let image=None;
-        let texture=image.map(|image|ctx.load_texture(format!("tray-icon:{}",source.name()),image,egui::TextureOptions::LINEAR));
-        self.tray_texture.insert(source.index(),texture.clone());
-        texture
-    }
-
     fn messenger_badge_rect(&self,win:Rect,panel:Rect)->Option<Rect>{
         if self.pending_messengers.is_empty() || self.browser_minimal_active && !self.open {return None;}
         // 收起时未读由胶囊上的托盘图标表达（闪烁 + 红点），不再另挂一条未读图标。
@@ -2520,21 +2505,17 @@ impl App {
         let pb=(local_cx+layout.x[bar::BATTERY].unwrap_or(0.0),15.0);
         let pcx=local_cx+layout.x[bar::CLOCK].unwrap()-paint::clock_width(base,&clock,size::PILL_CLOCK)/2.0;
 
-        // 胶囊左侧的常驻托盘图标（微信 / QQ）：来新消息时闪一会儿，点击跳到对应窗口。
+        // 胶囊左侧的常驻托盘图标（微信 / QQ）：有未读时持续呼吸，点击跳到对应窗口。
+        // 固定画内置的彩色矢量图标：exe 提取的图标在深色胶囊上会变暗甚至看不清。
         if lead>0.5 && target_lead>0.5 && p<0.06 {
             let appear=(lead/target_lead).clamp(0.0,1.0);
             let left=local_cx-(layout.width+lead)/2.0;
             let mut x=left+16.0+9.0;
             for source in self.tray_sources() {
                 let unread=self.pending_messengers.iter().any(|item|item.source==source);
-                let alpha=appear*if unread && self.t<self.messenger_blink_until {
-                    (0.30+0.70*(0.5+0.5*(self.t*7.0).sin())) as f32
-                } else if unread {1.0} else {0.55};
-                let icon=Rect::from_center_size(Pos2::new(x,15.0),Vec2::new(18.0,18.0));
-                match self.tray_texture_for(base.ui.ctx(),source) {
-                    Some(texture)=>{base.painter.image(texture.id(),icon,Rect::from_min_max(Pos2::ZERO,egui::pos2(1.0,1.0)),Color32::from_white_alpha((255.0*alpha).round() as u8));},
-                    None=>crate::extras::messenger_icon(&base.scaled(x,15.0,0.9).faded(alpha),x,15.0,source),
-                }
+                // 呼吸：未读时亮度 55%~100% 缓慢起伏；平时常亮，不压暗。
+                let alpha=appear*(if unread {0.55+0.45*(0.5+0.5*(self.t*2.2).sin())}else{1.0});
+                crate::extras::messenger_icon(&base.scaled(x,15.0,0.9).faded(alpha),x,15.0,source);
                 if unread {base.circle(x+8.0,6.5,2.4,Color32::from_rgb(255,72,72));}
                 let button=base.hit(x-10.0,5.0,20.0,20.0,("tray-icon",source.name())).on_hover_text(format!("打开{}",source.name()));
                 if button.clicked(){self.pending.push(Cmd::ViewMessenger(self.latest_unread(source)));}

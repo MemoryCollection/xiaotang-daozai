@@ -6,7 +6,8 @@ use crate::theme::{self, size, W};
 use eframe::egui::{self, Color32, Rect};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AlertSource { Internal, Wechat, External(String) }
+pub(crate) enum AlertSource { Internal, /// 仅保留给历史数据与绘制分支；新消息不再弹横幅。
+ #[allow(dead_code)] Wechat, External(String) }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Alert {
@@ -274,8 +275,7 @@ impl App {
         if self.notice.as_ref().is_some_and(|a|a.messenger()==Some(source)){self.notice=None;self.notification_bell_until=0.0;}
     }
     fn mark_messenger(&mut self,source:crate::app::Messenger,pid:u32,window:isize){
-        // 胶囊上的托盘图标：来一条新消息就闪 9 秒，连续来消息会一直闪。
-        self.messenger_blink_until=self.t+9.0;
+        // 未读由胶囊上的托盘图标呼吸表达；不再弹「有新消息」横幅。
         if let Some(u)=self.pending_messengers.iter_mut().find(|u|u.source==source && u.pid==pid){
             if window!=0 {u.window=window;}
             return;
@@ -290,10 +290,8 @@ impl App {
     /// 微信窗口闪动：`pid` 是该账号的进程，`window` 是闪动的窗口。
     pub fn receive_wechat_reminder_from(&mut self,pid:u32,window:isize){
         if !self.settings.wechat_notifications || !self.settings.notifications{return;}
+        // 只标记未读：胶囊托盘图标呼吸 + 红点提示，不再弹横幅。
         self.mark_messenger(crate::app::Messenger::Wechat,pid,window);
-        self.notification_bell_at=self.t;
-        self.notification_bell_until=self.t+4.5;
-        self.enqueue_alert(Alert{source:AlertSource::Wechat,title:"微信".into(),body:"有新消息 · 请到微信查看".into(),page:usize::MAX,at:self.t,duration:4.5,bluetooth:None,meeting:None},false);
     }
     pub fn receive_notification(&mut self, app:String, id:String, body:String){
         if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ"){return;}
