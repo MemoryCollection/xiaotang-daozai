@@ -1712,6 +1712,11 @@ impl App {
         let p = self.progress();
         let (w, h) = (self.w.pos, self.h.pos);
         let panel = self.island_rect(win, w, h);
+        // 双击岛体任意位置打开设置窗口：背景响应先注册，后绘制的按钮/页面控件优先消费点击，
+        // 所以只有双击落在没有控件的空白处（或收起后的胶囊本体）才会触发。
+        if ui.interact(panel,ui.id().with("island-bg"),egui::Sense::click()).double_clicked() {
+            self.open_settings();
+        }
         let messenger_rect=self.messenger_badge_rect(win,panel);
         let appear=self.messenger_appear();
         let outside_badge=messenger_rect.filter(|_|appear>0.02);
