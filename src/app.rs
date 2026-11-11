@@ -1638,9 +1638,18 @@ impl App {
         if self.settings.clock_period!=0 { layout.widen_clock(40.0); }
         if self.settings.clock_seconds { layout.widen_clock(bar::CLOCK_SECONDS_EXTRA); }
         if let Some(extra)=self.weather_pill_extra(&ctx){ layout.widen(bar::WEATHER,extra); }
+        // 按墨迹居中：槽宽是固定预留，实际墨迹更窄且有的组件在槽内偏一侧画，
+        // 量出本帧墨迹范围后把整组内容平移 bias，胶囊宽度不变。
+        let pet_pinned=self.pet_enabled()&&((self.notice.is_some()&&!self.compact_notices()&&!self.open)||self.island_lyrics_active());
+        let ink_bias=self.resident_ink_bias(&layout,&ctx,&self.settings.clock_text(&env.clock),pet_pinned);
         if self.pet_enabled() {
             if let Some(a)=self.notice.as_ref().filter(|_|!self.compact_notices()&&!self.open){layout.x[bar::PET]=Some(22.0-(self.notice_size(a).0+self.pet_space())/2.0);}
             else if self.island_lyrics_active() {layout.x[bar::PET]=Some(60.0-self.lyric_bar_width()/2.0);}
+        }
+        if ink_bias.abs()>0.01 {
+            for (slot,x) in layout.x.iter_mut().enumerate() {
+                if let Some(x)=x { if !(pet_pinned&&slot==bar::PET) { *x+=ink_bias; } }
+            }
         }
         self.resident.step(layout,dt,ctx.style().animation_time>0.0&&bar::animations_enabled());
         if self.opts.fetch_lyrics {
@@ -2396,6 +2405,58 @@ impl App {
     // ---------------------------------------------------------------
     // 顶栏：电池 + 日期 + 时钟。药丸里的电池与时钟会「飞」到顶栏位置（共享元素过渡）。
     // ---------------------------------------------------------------
+    /// 常驻胶囊按墨迹居中的整体平移量：量出本帧所有可见组件的实际墨迹范围
+    /// （相对胶囊中心的局部坐标），返回 `-(左界+右界)/2`，正值表示内容应向右移。
+    /// 槽宽是固定预留（时钟 44、天气 38……），而天气徽标等在槽内靠左画，
+    /// 只按槽位居中会让内容看起来整体偏左。偏移折进布局目标后由弹簧平滑，
+    /// 组件开关、温度与余额文字变化时不会跳变。
+    fn resident_ink_bias(&self,layout:&crate::bar_layout::Layout,ctx:&egui::Context,clock:&str,pet_pinned:bool)->f32 {
+        // 与 Card::text_w 同口径：直接按字号排版量宽（text_w 内部会把缩放除回去）。
+        let measure=|text:&str,size:f32,weight:W|->f32 {
+            ctx.fonts(|fonts|fonts.layout_no_wrap(text.to_owned(),theme::font(size,weight),theme::WHITE).size().x)
+        };
+        let (mut left,mut right)=(f32::INFINITY,f32::NEG_INFINITY);
+        macro_rules! ink{($l:expr,$r:expr)=>{left=left.min($l);right=right.max($r);}}
+        // 电池：圆环半径 8.2，描边 2.6。
+        if self.settings.show_battery&&self.resident_power.0.is_some()&&layout.x[bar::BATTERY].is_some(){ink!(-9.5,9.5);}
+        // 时钟：墨迹即时钟文字，画在槽位中心。
+        if layout.x[bar::CLOCK].is_some(){
+            let size=theme::size::PILL_CLOCK;
+            let width=match clock.split_once(' '){
+                Some((period,digits))=>measure(period,size*0.72,W::Semibold)+4.0+measure(digits,size,W::Bold),
+                None=>measure(clock,size,W::Bold),
+            };
+            ink!(-width/2.0,width/2.0);
+        }
+        // 天气徽标：小图标与温度文字整体靠槽位左侧画（图标中心在槽左 +7.5，温度从槽左 +16 起排）。
+        if self.weather_pill().is_some()&&layout.x[bar::WEATHER].is_some() {
+            if let Some(snapshot)=self.weather_pill() {
+                let temp=format!("{}°",snapshot.temp.round() as i32);
+                let slot_left=-layout.widths[bar::WEATHER]/2.0;
+                ink!(slot_left,slot_left+16.0+measure(&temp,theme::size::PILL_CLOCK,W::Bold));
+            }
+        }
+        // 额度槽：圆环以槽位中心对称；余额徽标（图标 + 文字）靠左画，加载中另有三个小圆点。
+        for (position,&index) in self.quota_bar_indices().iter().enumerate() {
+            let slot=bar::quota_slot(position);
+            if layout.x[slot].is_none() {continue;}
+            let account=&self.quota.config.accounts[index];
+            if account.provider.balance() {
+                let slot_left=-layout.widths[slot]/2.0;
+                if let Some(text)=self.quota.balance_text(&account.id){ink!(slot_left+1.5,slot_left+31.5+measure(&text,theme::size::PILL_CLOCK,W::Bold));}
+                else if self.quota.balance_loading(&account.id){ink!(slot_left+1.5,slot_left+45.2);}
+                else {ink!(slot_left+1.5,slot_left+25.5);}
+            } else {ink!(-12.5,14.5);}
+        }
+        // 音乐播放条：五根竖条整体偏右一点。
+        if self.music_playing()&&layout.x[bar::MUSIC].is_some(){ink!(-7.8,9.7);}
+        // 铃铛：铃身居中，右侧带红点。
+        if self.t<self.notification_bell_until&&!self.compact_notices()&&layout.x[bar::BELL].is_some(){ink!(-4.6,6.0);}
+        // 吉祥物：眼睛与表情大致以槽位中心对称；通知条、歌词接管时另有专属位置，不参与。
+        if !pet_pinned&&layout.x[bar::PET].is_some(){ink!(-11.0,11.0);}
+        if left.is_finite(){-(left+right)/2.0}else{0.0}
+    }
+
     fn shared_header(&mut self, base: &Card, cx: f32, p: f32, reveal: f32, env: &Env) {
         // 左侧给托盘图标留了位置：内容整体右移半个预留宽度，胶囊变宽后仍然居中。
         // 预留宽度做一次插值，微信/QQ 启动或退出时内容不会突然跳一下。
