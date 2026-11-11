@@ -318,8 +318,17 @@ unsafe fn apply_style(hwnd: HWND, editing: bool, raise: bool) {
     }
 }
 
+/// `DAOZAI_ALPHA_SURFACE=1` 强制走逐像素 alpha 合成，不做轮廓裁剪。
+/// AMD/Dx12/Vulkan 上默认用 `SetWindowRgn` 挡住透明画布的黑块，代价是边缘只有
+/// 1-bit 覆盖（任何 MSAA / 羽化都被裁掉）。这个开关用于在本机验证驱动是否其实
+/// 支持透明合成：设了它以后若没有黑块，边缘就是真正平滑的。
+fn alpha_surface_override()->bool {
+    std::env::var("DAOZAI_ALPHA_SURFACE").is_ok_and(|v|v!="0" && !v.eq_ignore_ascii_case("false"))
+}
+
 fn surface_needs_outline_clip(backend:Option<eframe::wgpu::Backend>,vendor:&str,renderer:&str)->bool {
     use eframe::wgpu::Backend;
+    if alpha_surface_override(){return false;}
     if matches!(backend,Some(Backend::Dx12|Backend::Vulkan)){return true;}
     if renderer.to_ascii_lowercase().contains("radeon"){return true;}
     [vendor,renderer].into_iter().any(|name|{
@@ -372,6 +381,7 @@ impl Window {
         }).unwrap_or_default();
         let opaque_surface=surface_needs_outline_clip(backend,&vendor,&renderer);
         if opaque_surface{glass_diagnostic("渲染兼容：已启用岛体轮廓裁剪，避免透明画布出现黑块");}
+        else if alpha_surface_override(){glass_diagnostic("实验：DAOZAI_ALPHA_SURFACE 已强制逐像素 alpha 合成，未做轮廓裁剪");}
         watch_drag(hwnd,cc.egui_ctx.clone());
         Some(Self { hwnd, region: (i32::MIN, 0, 0, 0), expanded: false, hook, browser_state:(None,PollClock::default()), drag_capture:DragCapture::default(), glass:None, backdrop:None, blur:false, blur_unavailable:false, opaque_surface })
     }

@@ -40,6 +40,11 @@ pub const CANVAS_W: f32 = WIN_W + 320.0; // 保留右侧通知及阴影的完整
 pub const WIN_H: f32 = 270.0;
 /// 胶囊皮肤与屏幕顶边的间隙。
 pub const PILL_GAP: f32 = 6.0;
+/// 胶囊皮肤改为「长方形四角有弧度」：收起时小圆角，展开时略放大。
+/// 半高（15）的全圆角药丸在 1-bit 窗口裁剪下会在两端留下整片阶梯，小圆角把
+/// 阶梯限制在四个角各约 8 像素，直边完全平滑。
+pub const PILL_RADIUS: f32 = 8.0;
+pub const PILL_RADIUS_OPEN: f32 = 14.0;
 
 /// 胶囊的柔和投影：四周都有，多层叠加近似高斯。
 fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
@@ -1673,8 +1678,7 @@ impl App {
         let minimal_pill = self.effective_minimal() && !self.island_lyrics_active() && self.notice.is_none() && self.t>=self.notification_bell_until && pc < 0.02;
         let flare = if minimal_pill || pill { 0.0 } else { lerp(5.0, FLARE, pc) };
         let k = (w / PW).clamp(0.3, 1.1);
-        let thickness = if side { crate::side_dock::SIDE_BAR_W } else { BAR_H };
-        let radius = if minimal_pill { BAR_H_MIN / 2.0 } else if pill { (w.min(h) * 0.5).min(lerp(thickness * 0.5, 26.0, pc)) } else { lerp(12.5, RAD * k.min(1.0), pc) };
+        let radius = if minimal_pill { BAR_H_MIN / 2.0 } else if pill { lerp(PILL_RADIUS, PILL_RADIUS_OPEN, pc).min(w.min(h) * 0.5) } else { lerp(12.5, RAD * k.min(1.0), pc) };
         let flare_h = lerp(8.0, FLARE_H, pc);
         let thick = glass::thickness(PH);
         let glass_skin = self.settings.skin.is_glass();
