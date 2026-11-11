@@ -305,7 +305,7 @@ fn http_agent() -> Result<ureq::Agent, String> {
 }
 
 /// 下载加速：把「前缀 + 原始地址 + 查询串」拼成加速地址，例如
-/// `https://gh.6qu.top/?pw=…` + 原始 zip 地址 → `https://gh.6qu.top/https://github.com/…zip?pw=…`。
+/// `https://加速站/?pw=…` + 原始 zip 地址 → `https://加速站/https://github.com/…zip?pw=…`。
 /// 加速站有的带令牌、有的不带，两种都支持；没写协议时按 https 补全。
 /// 留空返回 None，改回直连。
 fn accelerate(prefix: &str, url: &str) -> Option<String> {
@@ -548,13 +548,13 @@ mod tests {
     #[test]
     fn acceleration_prefix_keeps_the_original_url_and_carries_the_token() {
         let url = "https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe";
-        assert_eq!(accelerate("https://gh.6qu.top/?pw=token", url).as_deref(),
-            Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe?pw=token"));
+        assert_eq!(accelerate("https://proxy.example/?pw=token", url).as_deref(),
+            Some("https://proxy.example/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe?pw=token"));
         // 没有令牌的加速站也要能直接用。
-        assert_eq!(accelerate(" https://gh.6qu.top/ ", url).as_deref(),
-            Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe"));
-        assert_eq!(accelerate("gh.6qu.top", url).as_deref(),
-            Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe"));
+        assert_eq!(accelerate(" https://proxy.example/ ", url).as_deref(),
+            Some("https://proxy.example/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe"));
+        assert_eq!(accelerate("proxy.example", url).as_deref(),
+            Some("https://proxy.example/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe"));
         assert_eq!(accelerate("", url), None);
         assert_eq!(accelerate("?pw=token", url), None);
     }
