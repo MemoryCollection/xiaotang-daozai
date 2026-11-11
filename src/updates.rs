@@ -93,9 +93,9 @@ impl State {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("下载加速").size(12.0));
-            ui.add(egui::TextEdit::singleline(accel).hint_text("可选，例如 https://gh.6qu.top/?pw=…").desired_width(240.0));
+            ui.add(egui::TextEdit::singleline(accel).hint_text("可选，填加速站地址").desired_width(240.0));
         });
-        ui.label(egui::RichText::new("留空直接连 GitHub；填加速站首页（含 ?pw= 令牌）后，更新包改从该地址下载，安装包仍做 SHA-256 校验。").size(11.0));
+        ui.label(egui::RichText::new("留空直接连 GitHub；填加速站地址后更新包改从该地址下载，带令牌的链接原样使用，安装包仍做 SHA-256 校验。").size(11.0));
         ui.add_space(5.0);
     }
 
@@ -306,7 +306,8 @@ fn http_agent() -> Result<ureq::Agent, String> {
 
 /// 下载加速：把「前缀 + 原始地址 + 查询串」拼成加速地址，例如
 /// `https://gh.6qu.top/?pw=…` + 原始 zip 地址 → `https://gh.6qu.top/https://github.com/…zip?pw=…`。
-/// 留空或不是 http(s) 前缀时返回 None，改回直连。
+/// 加速站有的带令牌、有的不带，两种都支持；没写协议时按 https 补全。
+/// 留空返回 None，改回直连。
 fn accelerate(prefix: &str, url: &str) -> Option<String> {
     let prefix = prefix.trim();
     if prefix.is_empty() { return None; }
@@ -315,7 +316,11 @@ fn accelerate(prefix: &str, url: &str) -> Option<String> {
         None => (prefix, None),
     };
     let head = head.trim_end_matches('/');
-    if !(head.starts_with("https://") || head.starts_with("http://")) { return None; }
+    if head.is_empty() { return None; }
+    // 省略协议的按 https 补全；https 是下载安全检查的硬要求。
+    let head = if head.starts_with("https://") || head.starts_with("http://") {
+        head.to_owned()
+    } else { format!("https://{head}") };
     Some(match query.filter(|query| !query.is_empty()) {
         Some(query) => format!("{head}/{url}?{query}"),
         None => format!("{head}/{url}"),
@@ -545,10 +550,13 @@ mod tests {
         let url = "https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe";
         assert_eq!(accelerate("https://gh.6qu.top/?pw=token", url).as_deref(),
             Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe?pw=token"));
+        // 没有令牌的加速站也要能直接用。
         assert_eq!(accelerate(" https://gh.6qu.top/ ", url).as_deref(),
             Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe"));
+        assert_eq!(accelerate("gh.6qu.top", url).as_deref(),
+            Some("https://gh.6qu.top/https://github.com/MemoryCollection/xiaotang-daozai/releases/download/v0.6.71/Daozai-Setup-v0.6.71-x64.exe"));
         assert_eq!(accelerate("", url), None);
-        assert_eq!(accelerate("gh.6qu.top", url), None);
+        assert_eq!(accelerate("?pw=token", url), None);
     }
     #[test]
     fn download_rejects_truncation_corruption_excess_and_cancellation() {

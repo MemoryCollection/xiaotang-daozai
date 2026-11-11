@@ -340,7 +340,8 @@ pub struct Settings {
     pub clipboard_history: bool,
     /// 天气页要看的城市；留空表示按网络出口自动定位。
     pub weather_city: String,
-    /// 更新包下载加速前缀，例如 `https://gh.6qu.top/?pw=…`；留空直连 GitHub。
+    /// 更新包下载加速前缀，例如 `https://加速站/`，带令牌的写成 `https://加速站/?pw=…`；
+    /// 省略协议时按 https 补全，留空直连 GitHub。
     pub update_accel: String,
 }
 

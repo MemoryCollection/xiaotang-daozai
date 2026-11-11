@@ -65,6 +65,9 @@ const HOVER_INTENT: f64 = 0.20;
 const MINIMAL_HOVER_INTENT: f64 = 0.40;
 /// 自动避让「靠近才收细线」的判定半径（逻辑点）：鼠标进入岛体外围这么多距离就临时收起。
 const DODGE_NEAR: f32 = 36.0;
+/// 收起后的恢复半径（比 DODGE_NEAR 大）：留出这段滞后带，鼠标在范围边缘来回
+/// 移动不会「收 → 展 → 收」地抖。
+const DODGE_EXIT: f32 = 24.0;
 /// 移开后等待多久开始收起；这段时间内回来不会收。
 const LEAVE_DELAY: f64 = 0.12;
 const SWELL: (f32, f32) = (1.075, 1.13);
@@ -1496,6 +1499,17 @@ impl App {
         }
     }
 
+    /// 自动避让的判定框：按「胶囊尺寸」而不是当前动画尺寸算。若跟着收起后的细线
+    /// 一起缩小，鼠标会瞬间落到范围外 → 岛又展开 → 又进入范围，边界上就会来回抖。
+    fn dodge_rect(&self, win: Rect) -> Rect {
+        let (bw, bh) = if self.side() {
+            self.side_base_size(false)
+        } else {
+            (self.resident.target.width.min(WIN_W - 32.0).max(BAR_W_MIN), BAR_H)
+        };
+        self.island_rect(win, self.w.pos.max(bw), self.h.pos.max(bh))
+    }
+
     /// 挂在胶囊右侧、但不计入 `base_size()` 的常驻元素总宽。
     /// 微信/QQ 未读条与紧凑通知条都向右延伸，只按胶囊宽度居中会让整组偏右。
     fn side_attachment_width(&self) -> f32 {
@@ -1553,11 +1567,22 @@ impl App {
             let target=if self.settings.skin==model::Skin::GlassLight {glass::light_tint(env.backdrop,env.glass_blur)}else{glass::glass_tint(env.backdrop,env.glass_blur)};
             self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
         }
-        // 「靠近才收细线」：应用在前台遮住岛时先保持原样，只有鼠标移到岛附近才临时收成细线避让。
-        let dodge_near = !self.settings.avoid_dodge || env.cursor.is_some_and(|cursor| {
-            self.island_rect(win,self.w.pos,self.h.pos).expand(DODGE_NEAR).contains(cursor)
-        });
-        let browser_minimal=self.settings.browser_minimal && self.browser_at_top && dodge_near;
+        // 「靠近才收细线」：应用在前台遮住岛时先保持原样，只有鼠标移到岛附近才临时
+        // 收成细线避让；鼠标移到细线上再恢复成胶囊（之后照常按悬停规则展开）。
+        let browser_minimal = if !(self.settings.browser_minimal && self.browser_at_top) {
+            false
+        } else if !self.settings.avoid_dodge {
+            // 未开启「靠近才收」：沿用旧行为，应用压住岛就立即收成细线。
+            true
+        } else {
+            let rect = self.dodge_rect(win);
+            // 已经收起时用更大的恢复半径，边界上不会反复收/展。
+            let reach = if self.browser_minimal_active { DODGE_NEAR + DODGE_EXIT } else { DODGE_NEAR };
+            env.cursor.is_some_and(|cursor| {
+                // 光标已经落在岛上：不再避让，恢复胶囊（细线本身很窄，只判细线会很难点中）。
+                if rect.contains(cursor) { false } else { rect.expand(reach).contains(cursor) }
+            })
+        };
         if browser_minimal && !self.browser_minimal_active {
             self.open=false;
             // 靠近避让是鼠标触发的收起，不能再锁悬停，否则移到细线上也无法展开。

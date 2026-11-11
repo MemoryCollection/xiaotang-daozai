@@ -44,7 +44,7 @@ impl Picker {
             setting_row(ui,"自动避让","指定应用在前台并遮住岛的位置时，收成细线",&mut settings.browser_minimal);
             ui.add_enabled_ui(settings.browser_minimal,|ui|{
                 ui.separator();
-                setting_row(ui,"靠近才收细线","应用在前台时岛上保持原样，鼠标移到岛附近才收成细线避让；悬停细线仍正常展开",&mut settings.avoid_dodge);
+                setting_row(ui,"靠近才收细线","应用在前台时岛上保持原样，鼠标移到岛附近才收成细线避让；移回细线上即恢复胶囊",&mut settings.avoid_dodge);
                 ui.separator();
                 setting_row(ui,"常用浏览器","自动识别 Chrome、Edge、夸克等浏览器",&mut settings.avoid_browsers);
                 ui.separator();
