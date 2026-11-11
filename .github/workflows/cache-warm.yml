@@ -1,0 +1,51 @@
+name: 预热发布缓存
+# GitHub 缓存按 ref 隔离：tag 运行保存的缓存，下一个 tag 读不到。
+# 只有默认分支 main 上的缓存能跨 tag 复用，所以依赖变化时手动跑一次即可。
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  warm:
+    runs-on: windows-latest
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Rust stable
+        run: rustup toolchain install stable --profile minimal
+      - name: 缓存 Cargo 依赖源码
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: deps-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+          save-always: true
+      - name: 缓存 release 编译产物
+        uses: actions/cache@v4
+        with:
+          path: target/x86_64-pc-windows-msvc/release
+          key: release-msvc-${{ hashFiles('scripts/package.ps1', '.cargo/config.toml') }}-${{ github.sha }}
+          restore-keys: |
+            release-msvc-${{ hashFiles('scripts/package.ps1', '.cargo/config.toml') }}-
+            release-msvc-
+          save-always: true
+      - name: 缓存 NSIS 编译器
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/nsis-3.13
+          key: nsis-3.13-${{ runner.os }}
+      - name: 构建一次以填充缓存
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:RUNNER_TEMP 'nsis-3.13\makensis.exe'
+          if (-not (Test-Path -LiteralPath $compiler)) {
+            $compiler = ./scripts/get-nsis.ps1 -Directory $env:RUNNER_TEMP
+          }
+          ./scripts/package.ps1 -NsisCompiler $compiler -OutputDirectory (Join-Path $env:RUNNER_TEMP 'dist')

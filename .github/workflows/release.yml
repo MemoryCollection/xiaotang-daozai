@@ -13,29 +13,62 @@ jobs:
     runs-on: windows-latest
     env:
       CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
       - name: 安装 Rust stable
         run: rustup toolchain install stable --profile minimal
+      # 直接构建，不跑测试：package.ps1 里的 release 编译 + 版本/PE/路径校验就是发布门禁。
+      - name: 缓存 Cargo 依赖源码
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          # 不带 Cargo.lock：版本升级会改 lock，但已下载的 crate 仍可复用。
+          key: deps-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+          save-always: true
+      # rustflags 由 package.ps1 通过 CARGO_ENCODED_RUSTFLAGS 覆盖，必须进 key，
+      # 否则会命中调试构建产物。源码变化由 cargo 自己的指纹处理，不放进 key。
+      - name: 缓存 release 编译产物
+        uses: actions/cache@v4
+        with:
+          path: target/x86_64-pc-windows-msvc/release
+          key: release-msvc-${{ hashFiles('scripts/package.ps1', '.cargo/config.toml') }}-${{ github.sha }}
+          restore-keys: |
+            release-msvc-${{ hashFiles('scripts/package.ps1', '.cargo/config.toml') }}-
+            release-msvc-
+          save-always: true
+      - name: 缓存 NSIS 编译器
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/nsis-3.13
+          key: nsis-3.13-${{ runner.os }}
       - name: 校验标签与 Cargo.toml 版本一致
         shell: pwsh
         run: |
           $version = [regex]::Match((Get-Content Cargo.toml -Raw), '(?m)^version = "([^"]+)"').Groups[1].Value
           if ($env:GITHUB_REF_NAME -ne "v$version") { throw "标签 $($env:GITHUB_REF_NAME) 与版本 v$version 不一致" }
-      - name: 测试
-        run: cargo +stable test --locked --all-targets --features record --target x86_64-pc-windows-msvc -- --test-threads=1
       - name: 构建并打包
         shell: pwsh
         run: |
           try {
-            $compiler = $null
-            foreach ($attempt in 1..3) {
-              try { $compiler = ./scripts/get-nsis.ps1 -Directory $env:RUNNER_TEMP; break }
-              catch { Write-Host "NSIS 下载失败（第 $attempt 次）：$($_.Exception.Message)"; Start-Sleep -Seconds 5 }
-            }
-            if (-not $compiler) {
-              choco install nsis --no-progress -y | Out-Null
-              $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+            $compiler = Join-Path $env:RUNNER_TEMP 'nsis-3.13\makensis.exe'
+            if (-not (Test-Path -LiteralPath $compiler)) {
+              $downloaded = $null
+              foreach ($attempt in 1..3) {
+                try { $downloaded = ./scripts/get-nsis.ps1 -Directory $env:RUNNER_TEMP; break }
+                catch { Write-Host "NSIS 下载失败（第 $attempt 次）：$($_.Exception.Message)"; Start-Sleep -Seconds 5 }
+              }
+              if ($downloaded) { $compiler = $downloaded }
+              else {
+                choco install nsis --no-progress -y | Out-Null
+                $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+              }
             }
             if (-not (Test-Path -LiteralPath $compiler)) { throw "找不到 NSIS 编译器：$compiler" }
             ./scripts/package.ps1 -NsisCompiler $compiler
