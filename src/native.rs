@@ -318,23 +318,20 @@ unsafe fn apply_style(hwnd: HWND, editing: bool, raise: bool) {
     }
 }
 
-/// `DAOZAI_ALPHA_SURFACE=1` 强制走逐像素 alpha 合成，不做轮廓裁剪。
-/// AMD/Dx12/Vulkan 上默认用 `SetWindowRgn` 挡住透明画布的黑块，代价是边缘只有
-/// 1-bit 覆盖（任何 MSAA / 羽化都被裁掉）。这个开关用于在本机验证驱动是否其实
-/// 支持透明合成：设了它以后若没有黑块，边缘就是真正平滑的。
-fn alpha_surface_override()->bool {
-    std::env::var("DAOZAI_ALPHA_SURFACE").is_ok_and(|v|v!="0" && !v.eq_ignore_ascii_case("false"))
+/// 默认走逐像素 alpha 合成：DWM 按每像素 alpha 混合窗口，egui 画在轮廓外侧的
+/// 1px 羽化带才能完整显示，圆角与斜边才有抗锯齿。实测 AMD Radeon 核显 + Dx12
+/// 下透明画布并不留黑块；旧版按厂商/后端一律启用 `SetWindowRgn` 是误判，GDI
+/// 区域只有 1-bit 覆盖，会把 MSAA 与羽化边缘整块裁掉，正是 1080p 锯齿的来源。
+///
+/// 极少数驱动仍会在透明画布留下黑块时，用 `DAOZAI_OUTLINE_CLIP=1` 回退到旧的
+/// 1-bit 轮廓裁剪（代价：边缘恢复硬阶梯）。`DAOZAI_ALPHA_SURFACE=1` 是上一版的
+/// 实验开关，现已成为默认行为，保留兼容且优先级高于回退开关。
+fn env_flag(key:&str)->bool {
+    std::env::var(key).is_ok_and(|v|v!="0" && !v.eq_ignore_ascii_case("false"))
 }
 
-fn surface_needs_outline_clip(backend:Option<eframe::wgpu::Backend>,vendor:&str,renderer:&str)->bool {
-    use eframe::wgpu::Backend;
-    if alpha_surface_override(){return false;}
-    if matches!(backend,Some(Backend::Dx12|Backend::Vulkan)){return true;}
-    if renderer.to_ascii_lowercase().contains("radeon"){return true;}
-    [vendor,renderer].into_iter().any(|name|{
-        let name=name.to_ascii_lowercase();
-        name.contains("advanced micro devices") || name.split(|c:char|!c.is_ascii_alphanumeric()).any(|word|matches!(word,"amd"|"ati"))
-    })
+fn surface_needs_outline_clip()->bool {
+    !env_flag("DAOZAI_ALPHA_SURFACE") && env_flag("DAOZAI_OUTLINE_CLIP")
 }
 
 pub struct Window {
@@ -374,14 +371,9 @@ impl Window {
         };
         // 区域用哨兵值：首帧（包括启动即隐藏的空区域）也必须真正调用 SetWindowRgn，
         // 否则整块透明画布会挡住下层程序的点击。
-        let backend=cc.wgpu_render_state.as_ref().map(|state|state.adapter.get_info().backend);
-        let (vendor,renderer)=cc.gl.as_ref().map(|gl|{
-            use eframe::glow::HasContext;
-            unsafe{(gl.get_parameter_string(eframe::glow::VENDOR),gl.get_parameter_string(eframe::glow::RENDERER))}
-        }).unwrap_or_default();
-        let opaque_surface=surface_needs_outline_clip(backend,&vendor,&renderer);
-        if opaque_surface{glass_diagnostic("渲染兼容：已启用岛体轮廓裁剪，避免透明画布出现黑块");}
-        else if alpha_surface_override(){glass_diagnostic("实验：DAOZAI_ALPHA_SURFACE 已强制逐像素 alpha 合成，未做轮廓裁剪");}
+        let opaque_surface=surface_needs_outline_clip();
+        if opaque_surface{glass_diagnostic("渲染兼容：DAOZAI_OUTLINE_CLIP 已启用 1-bit 轮廓裁剪，边缘会有锯齿");}
+        else {glass_diagnostic("渲染：逐像素 alpha 合成，岛体轮廓带抗锯齿羽化");}
         watch_drag(hwnd,cc.egui_ctx.clone());
         Some(Self { hwnd, region: (i32::MIN, 0, 0, 0), expanded: false, hook, browser_state:(None,PollClock::default()), drag_capture:DragCapture::default(), glass:None, backdrop:None, blur:false, blur_unavailable:false, opaque_surface })
     }
@@ -542,27 +534,50 @@ mod tests {
     use super::*;
     static NATIVE_STATE_LOCK:Mutex<()>=Mutex::new(());
 
+    /// 环境变量是进程全局的，所有读写都必须在 NATIVE_STATE_LOCK 下串行。
+    fn env_scope<T>(clip:Option<&str>,alpha:Option<&str>,run:impl FnOnce()->T)->T {
+        let saved_clip=std::env::var("DAOZAI_OUTLINE_CLIP").ok();
+        let saved_alpha=std::env::var("DAOZAI_ALPHA_SURFACE").ok();
+        match clip {Some(v)=>std::env::set_var("DAOZAI_OUTLINE_CLIP",v),None=>std::env::remove_var("DAOZAI_OUTLINE_CLIP")}
+        match alpha {Some(v)=>std::env::set_var("DAOZAI_ALPHA_SURFACE",v),None=>std::env::remove_var("DAOZAI_ALPHA_SURFACE")}
+        let result=run();
+        match saved_clip {Some(v)=>std::env::set_var("DAOZAI_OUTLINE_CLIP",v),None=>std::env::remove_var("DAOZAI_OUTLINE_CLIP")}
+        match saved_alpha {Some(v)=>std::env::set_var("DAOZAI_ALPHA_SURFACE",v),None=>std::env::remove_var("DAOZAI_ALPHA_SURFACE")}
+        result
+    }
+
     #[test]
-    fn opaque_surface_clips_black_background_even_without_system_blur(){
+    fn alpha_surface_is_default_and_outline_clip_is_opt_in(){
         let _guard=NATIVE_STATE_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+        env_scope(None,None,||{
+            assert!(!surface_needs_outline_clip(),"默认必须走逐像素 alpha，否则边缘只有 1-bit 硬边");
+        });
+        env_scope(Some("1"),None,||{
+            assert!(surface_needs_outline_clip(),"DAOZAI_OUTLINE_CLIP=1 应回退到轮廓裁剪");
+        });
+        env_scope(Some("1"),Some("1"),||{
+            assert!(!surface_needs_outline_clip(),"旧实验开关优先级应高于回退开关");
+        });
+    }
+
+    /// 回退路径仍要能挡住透明画布的黑块（少数驱动的兼容方案）。
+    #[test]
+    fn outline_clip_fallback_clips_black_background_even_without_system_blur(){
+        let _guard=NATIVE_STATE_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+        env_scope(Some("1"),None,||{
         use windows::Win32::Graphics::Gdi::{GetWindowRgn,PtInRegion};
-        for (backend,vendor,renderer) in [
-            (Some(eframe::wgpu::Backend::Dx12),"",""),
-            (Some(eframe::wgpu::Backend::Vulkan),"",""),
-            (None,"ATI Technologies Inc.","AMD Radeon RX 6750 GRE 12GB"),
-            (None,"Advanced Micro Devices, Inc.","Radeon RX 7900 XT"),
-        ] {for blur_unavailable in [true,false] {for ppp in [1.0,1.25,1.5,2.0] {unsafe {
+        for blur_unavailable in [true,false] {for ppp in [1.0,1.25,1.5,2.0] {unsafe {
             let px=|v:f32|(v*ppp).round() as i32;
             let hwnd=CreateWindowExW(WS_EX_TOOLWINDOW,windows::core::w!("STATIC"),windows::core::w!(""),WS_POPUP,-10000,-10000,px(400.0),px(200.0),None,None,None,None).unwrap();
             let saved=hit().lock().unwrap_or_else(|e|e.into_inner()).clone();
             {
-                let mut native=Window{hwnd,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable,opaque_surface:surface_needs_outline_clip(backend,vendor,renderer)};
+                let mut native=Window{hwnd,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable,opaque_surface:surface_needs_outline_clip()};
                 let shapes=[crate::app::GlassShape::Round(eframe::egui::Rect::from_min_max(eframe::egui::pos2(80.0,60.0),eframe::egui::pos2(320.0,160.0)),25.0)];
                 native.update((0.0,0.0,400.0,200.0),(80.0,60.0,240.0,100.0),None,None,Some(&shapes),ppp,false,false);
                 let region=CreateRectRgn(0,0,0,0);
                 GetWindowRgn(hwnd,region);
                 assert!(PtInRegion(region,px(200.0),px(100.0)).as_bool());
-                assert!(!PtInRegion(region,px(10.0),px(10.0)).as_bool(),"兼容后端不能保留画布上的黑色背景：{backend:?} / {vendor} / {renderer}");
+                assert!(!PtInRegion(region,px(10.0),px(10.0)).as_bool(),"轮廓裁剪必须去掉画布上的黑色背景");
                 assert!(!PtInRegion(region,px(81.0),px(61.0)).as_bool(),"圆角外侧必须透出桌面");
                 assert!(!native.blur);
                 assert!(native.backdrop.is_none(),"轮廓兼容模式不能再启用独立模糊底板");
@@ -574,16 +589,7 @@ mod tests {
             *hit().lock().unwrap_or_else(|e|e.into_inner())=saved;
             let _=DestroyWindow(hwnd);
         }}}}
-    }
-
-    #[test]
-    fn outline_clip_preserves_other_opengl_drivers_and_recognizes_amd_variants(){
-        for (vendor,renderer) in [("NVIDIA Corporation","NVIDIA GeForce RTX 4060"),("Intel","Intel(R) UHD Graphics"),("Mesa","llvmpipe (LLVM 20.1.1, 256 bits)"),("Microsoft Corporation","GDI Generic")]{
-            assert!(!surface_needs_outline_clip(None,vendor,renderer),"正常驱动不能被错误识别为 AMD：{vendor}");
-        }
-        for (vendor,renderer) in [("AMD","Radeon RX 6750 GRE"),("ati technologies inc.","Radeon"),("Mesa","AMD Radeon RX 6800 (radeonsi)"),("Mesa","Radeon RX 6750 GRE (radeonsi)")]{
-            assert!(surface_needs_outline_clip(None,vendor,renderer),"需要识别 AMD 厂商与渲染器：{vendor} / {renderer}");
-        }
+        });
     }
 
     #[test]
