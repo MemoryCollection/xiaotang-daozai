@@ -55,6 +55,9 @@ fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
     }
 }
 pub(crate) const PAGE_NAMES: [&str; 9] = ["音乐", "专注", "饮水", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气"];
+/// 展开面板不再展示的三个页面：功能本身、设置项与提醒通知全部保留，
+/// 只是不再占用岛上的页签和内容区。
+pub(crate) const QUIET_PAGES: [usize; 3] = [0, 1, 2];
 
 // ---------- 动效参数 ----------
 /// 悬停意图缓冲：光标停留这么久才真正展开（期间药丸轻微胀大作为反馈），防误触。
@@ -755,7 +758,7 @@ impl App {
         let (bw, bh) = if settings.minimal { (BAR_W_MIN, BAR_H_MIN) } else { (BAR_W, BAR_H) };
         let focus_seconds=settings.focus_minutes as f32*60.0;
         let initial_lyrics=settings.lyrics_enabled;
-        let initial_page=settings.page_order.iter().copied().find(|page|settings.visible_pages[*page]).unwrap_or(0);
+        let initial_page=settings.page_order.iter().copied().find(|page|settings.visible_pages[*page] && !QUIET_PAGES.contains(page)).unwrap_or(3);
         Self {
             opts,
             settings,
@@ -1283,7 +1286,7 @@ impl App {
     }
 
     pub fn show_page(&mut self,page:usize) {
-        if !self.settings.visible_pages[page] {
+        if !self.page_available(page) {
             // 与 PAGE_NAMES 一一对应（含第 9 个天气页），隐藏页面打开设置时不能越界。
             self.settings_tab=[1,2,3,5,4,7,11,8,12][page];
             self.open_settings();
@@ -1310,12 +1313,18 @@ impl App {
         self.page
     }
 
+    /// 页面能否出现在展开面板里。音乐/专注/饮水仍保留设置项与提醒，
+    /// 但不再作为可导航页面出现；用户原有的 visible_pages 开关不受改动。
+    pub(crate) fn page_available(&self,page:usize)->bool {
+        self.settings.visible_pages.get(page).copied().unwrap_or(false) && !QUIET_PAGES.contains(&page)
+    }
+
     pub(crate) fn set_page_visible(&mut self,page:usize,visible:bool) {
         if !visible && self.settings.visible_pages.iter().filter(|enabled|**enabled).count()==1
             && self.settings.visible_pages[page] { return; }
         self.settings.visible_pages[page]=visible;
         if !self.settings.visible_pages[self.page] {
-            if let Some(first)=self.settings.page_order.iter().copied().find(|page|self.settings.visible_pages[*page]) { self.go(first,1.0); }
+            if let Some(first)=self.settings.page_order.iter().copied().find(|page|self.page_available(*page)) { self.go(first,1.0); }
         }
     }
 
@@ -1323,7 +1332,7 @@ impl App {
         let position=self.settings.page_order.iter().position(|page|*page==self.page).unwrap();
         for offset in 1..=PAGE_NAMES.len() {
             let page=self.settings.page_order[(position+if next {offset}else{PAGE_NAMES.len()-offset})%PAGE_NAMES.len()];
-            if self.settings.visible_pages[page] {
+            if self.page_available(page) {
                 self.go(page,if next {1.0}else{-1.0});
                 break;
             }
@@ -1357,7 +1366,7 @@ impl App {
 
     /// 带过渡地切到某页。`dir` > 0 表示内容从右侧进入。
     pub(crate) fn go(&mut self, page: usize, dir: f32) {
-        if page == self.page || !self.settings.visible_pages[page] { return; }
+        if page == self.page || !self.page_available(page) { return; }
         self.subpage=None;
         // 连点：上一段过渡还没结束时，以当前页为起点重新开始，位移速度保留。
         self.page_from = self.page;
@@ -2478,7 +2487,7 @@ impl App {
     }
 
     fn nav(&mut self, c: &Card) {
-        let pages: Vec<_>=self.settings.page_order.iter().copied().filter(|page|self.settings.visible_pages[*page]).collect();
+        let pages: Vec<_>=self.settings.page_order.iter().copied().filter(|page|self.page_available(*page)).collect();
         if pages.len()<2 { return; }
         let arrow_y=if self.page==6||self.page==8{88.0}else{68.0};
         let l = c.hit(8.0, arrow_y-13.0, 26.0, 26.0, "nav-l");

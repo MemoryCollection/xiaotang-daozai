@@ -1053,7 +1053,7 @@ const SETTINGS_GROUPS: [(&str,usize,usize);9] = [
     ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("AI 额度",11,11), ("天气",12,12), ("关于",9,9),
 ];
 /// 设置窗口初始尺寸（逻辑点），居中计算与窗口创建共用，避免两处不一致。
-fn settings_size()->egui::Vec2 { egui::vec2(690.0,560.0) }
+fn settings_size()->egui::Vec2 { egui::vec2(900.0,520.0) }
 
 /// 首次打开设置窗口时把它摆到主屏中心。之后不再发送位置命令，用户拖动、
 /// 调整大小或系统记住的位置都保留；取不到屏幕信息时维持系统默认位置。
@@ -1091,7 +1091,7 @@ impl App {
         }
         let id=egui::ViewportId::from_hash_of("daozai-settings");
         let focus_requested=std::mem::take(&mut self.settings_focus_requested);
-        ctx.show_viewport_immediate(id,egui::ViewportBuilder::default().with_title("岛仔设置").with_icon(theme::app_icon()).with_inner_size(settings_size()).with_min_inner_size([600.0,450.0]).with_visible(false).with_active(false).with_window_level(egui::WindowLevel::Normal),|ctx,_|{
+        ctx.show_viewport_immediate(id,egui::ViewportBuilder::default().with_title("岛仔设置").with_icon(theme::app_icon()).with_inner_size(settings_size()).with_min_inner_size([760.0,440.0]).with_visible(false).with_active(false).with_window_level(egui::WindowLevel::Normal),|ctx,_|{
             let dark=self.settings.settings_theme.dark(crate::settings_theme::system_dark(ctx));
             let original_style=ctx.style();
             let mut style=(*original_style).clone();
@@ -1217,8 +1217,13 @@ impl App {
                             struct PageDrag(usize);
                             let mut movement=None;
                             let row_w=ui.available_width();
+                            let mut first_row=true;
                             for (index,page) in self.settings.page_order.into_iter().enumerate() {
-                                if index>0 {ui.separator();}
+                                // 音乐/专注/饮水仍在各自的设置分组里配置，但不再占用展开面板，
+                                // 这里也不提供「功能页面」开关，避免出现勾了却无效的选项。
+                                if crate::app::QUIET_PAGES.contains(&page) { continue; }
+                                if !first_row {ui.separator();}
+                                first_row=false;
                                 let mut visible=self.settings.visible_pages[page];
                                 let can_change=!visible || self.settings.visible_pages.iter().filter(|enabled|**enabled).count()>1;
                                 let row=ui.push_id(("page-order",page),|ui|ui.horizontal(|ui|{
