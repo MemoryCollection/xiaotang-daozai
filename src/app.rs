@@ -126,6 +126,8 @@ pub struct Env {
     pub glass_blur: bool,
     /// 不支持逐像素透明的兼容后端需要按内容轮廓裁剪窗口。
     pub opaque_surface: bool,
+    /// 微信 / QQ 是否正在运行（顺序与 `Messenger::index()` 一致），用于常驻托盘图标。
+    pub clients: [bool; 2],
 }
 
 impl Env {
@@ -141,6 +143,9 @@ impl Env {
 pub enum Messenger { Wechat, Qq }
 impl Messenger {
     pub fn name(self)->&'static str {match self {Self::Wechat=>"微信",Self::Qq=>"QQ"}}
+    /// `Env::clients` 里的下标。
+    pub fn index(self)->usize {match self {Self::Wechat=>0,Self::Qq=>1}}
+    pub const ALL:[Messenger;2]=[Self::Wechat,Self::Qq];
 }
 
 /// 一条未读：来源、账号所在进程（QQ 通知分不出账号，记为 0）和发出提醒的窗口（没有时为 0）。
@@ -156,6 +161,8 @@ pub(crate) const UNREAD_GAP: f32 = 8.0;
 pub(crate) const UNREAD_SLOT: f32 = 36.0;
 /// 收起时两个来源图标的间距：并排各占一格，不叠放。
 fn unread_step(_horizontal: bool) -> f32 { 22.0 }
+/// 胶囊左侧托盘图标的间距（图标 18pt + 2pt 间隙）。
+const TRAY_STEP: f32 = 20.0;
 
 /// 交给外壳执行的副作用。
 #[derive(Clone, Debug, PartialEq)]
@@ -705,6 +712,12 @@ pub struct App {
     notice_details: bool,
     pub pending_messengers:Vec<Unread>,
     messenger_scroll: f32,
+    /// 胶囊上常驻托盘图标的闪烁截止时间：来新消息时亮起来闪一会儿。
+    pub(crate) messenger_blink_until: f64,
+    /// 正在运行的客户端（微信 / QQ），由外壳每几秒刷新一次。
+    pub(crate) clients:[bool;2],
+    /// 托盘图标的纹理（按 `Messenger::index()`），加载失败时留 None 改画矢量图标。
+    tray_texture:std::collections::HashMap<usize,Option<egui::TextureHandle>>,
     pub(crate) alerts: std::collections::VecDeque<Alert>,
     pub(crate) history: std::collections::VecDeque<Alert>,
     pub(crate) pending: Vec<Cmd>,
@@ -825,7 +838,7 @@ impl App {
             music_artwork: None,
             forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
-            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, messenger_blink_until:0.0, clients:[false;2], tray_texture:Default::default(), alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
             toast: None, toast_below: false,
             last_input: 0.0, system_idle: None,
@@ -1495,7 +1508,7 @@ impl App {
         } else if self.effective_minimal()&&self.t>=self.notification_bell_until {
             (BAR_W_MIN, BAR_H_MIN)
         } else {
-            (self.resident.target.width.min(WIN_W-32.0), BAR_H)
+            ((self.resident.target.width+self.tray_lead()).min(WIN_W-32.0), BAR_H)
         }
     }
 
@@ -1505,7 +1518,7 @@ impl App {
         let (bw, bh) = if self.side() {
             self.side_base_size(false)
         } else {
-            (self.resident.target.width.min(WIN_W - 32.0).max(BAR_W_MIN), BAR_H)
+            ((self.resident.target.width+self.tray_lead()).min(WIN_W - 32.0).max(BAR_W_MIN), BAR_H)
         };
         self.island_rect(win, self.w.pos.max(bw), self.h.pos.max(bh))
     }
@@ -1515,7 +1528,8 @@ impl App {
     fn side_attachment_width(&self) -> f32 {
         if self.side() { return 0.0; }
         let mut extra = self.notice_width.pos;
-        if self.pending_messengers.is_empty() || self.browser_minimal_active && !self.open { return extra; }
+        // 收起时未读已经由胶囊上的托盘图标表达，不再额外挂一条未读图标。
+        if self.pending_messengers.is_empty() || self.browser_minimal_active && !self.open || self.tray_lead()>0.5 { return extra; }
         // 完整横幅已带来源图标时不再挂未读条，与 messenger_badge_rect 保持一致。
         if !self.open && !self.compact_notices() && self.pending_messengers.len()==1
             && self.notice.as_ref().and_then(|a|a.messenger())==self.pending_messengers.first().map(|u|u.source) { return extra; }
@@ -1592,6 +1606,8 @@ impl App {
             self.forced_open_until=0.0;
         }
         self.browser_minimal_active=browser_minimal;
+        // 托盘图标闪烁期间保持刷新，否则没有输入时画面会停在一帧上。
+        if self.t < self.messenger_blink_until { ctx.request_repaint(); }
         if !self.started {
             self.started = true;
             self.last_input = env.t;
@@ -1875,8 +1891,9 @@ impl App {
         if pet_alpha>0.004 && !minimal_pill {
             let y=(h.min(self.base_size().1)-BAR_H).max(0.0)/2.0;
             // 吉祥物跟随皮肤换色：浅色底上变成深色版本，保持清晰。
-            let fit=if self.island_lyrics_active()||self.notice.is_some(){1.0}else{((WIN_W-32.0)/self.resident.target.width).min(1.0)};
-            self.pet.draw(&base.scaled(cx-origin.x,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+self.resident.position(bar::PET),self.t,self.skin_palette());
+            let fit=if self.island_lyrics_active()||self.notice.is_some(){1.0}else{((WIN_W-32.0)/(self.resident.target.width+self.tray_lead())).min(1.0)};
+            let pet_lead=self.tray_lead()*0.5;
+            self.pet.draw(&base.scaled(cx-origin.x+pet_lead,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+pet_lead+self.resident.position(bar::PET),self.t,self.skin_palette());
         }
         if reveal > 0.004 && !banner && !restoring_lyrics {
             let c = base.shifted(0.0, (1.0 - reveal) * -5.0).faded(reveal);
@@ -2056,8 +2073,48 @@ impl App {
         32.0+unread_step(horizontal)*(icons-1.0)
     }
 
+    /// 胶囊上要显示的托盘图标：开关打开，并且客户端正在运行或有未读。
+    fn tray_sources(&self)->Vec<Messenger>{
+        if !self.settings.tray_icons {return Vec::new();}
+        Messenger::ALL.into_iter().filter(|source|{
+            self.clients[source.index()] || self.pending_messengers.iter().any(|unread|unread.source==*source)
+        }).collect()
+    }
+
+    /// 要显示的托盘图标个数（`base_size` 每帧调用多次，这里不分配）。
+    fn tray_count(&self)->usize{
+        if !self.settings.tray_icons {return 0;}
+        Messenger::ALL.iter().filter(|source|{
+            self.clients[source.index()] || self.pending_messengers.iter().any(|unread|unread.source==**source)
+        }).count()
+    }
+
+    /// 胶囊左侧为托盘图标预留的宽度。展开、极简、歌词、横幅和侧边停靠时不占位。
+    fn tray_lead(&self)->f32{
+        if self.open || self.side() || self.effective_minimal() || self.island_lyrics_active() || self.notice.is_some() {
+            return 0.0;
+        }
+        let count=self.tray_count() as f32;
+        if count<=0.0 {0.0} else {count*TRAY_STEP+4.0}
+    }
+
+    /// 托盘图标纹理：第一次用到时从客户端 exe 取图标并上传，取不到返回 None（改画矢量图标）。
+    fn tray_texture_for(&mut self,ctx:&egui::Context,source:Messenger)->Option<egui::TextureHandle>{
+        if let Some(cached)=self.tray_texture.get(&source.index()) {return cached.clone();}
+        #[cfg(windows)]
+        let image=crate::wechat::client_exe(source)
+            .and_then(|path|crate::icons::exe_icon(std::path::Path::new(&path)));
+        #[cfg(not(windows))]
+        let image=None;
+        let texture=image.map(|image|ctx.load_texture(format!("tray-icon:{}",source.name()),image,egui::TextureOptions::LINEAR));
+        self.tray_texture.insert(source.index(),texture.clone());
+        texture
+    }
+
     fn messenger_badge_rect(&self,win:Rect,panel:Rect)->Option<Rect>{
         if self.pending_messengers.is_empty() || self.browser_minimal_active && !self.open {return None;}
+        // 收起时未读由胶囊上的托盘图标表达（闪烁 + 红点），不再另挂一条未读图标。
+        if self.tray_lead()>0.5 {return None;}
         // 完整横幅已包含该来源图标。歌词模式和横幅收起后使用常驻入口。
         if !self.open && !self.compact_notices() && self.pending_messengers.len()==1
             && self.notice.as_ref().and_then(|a|a.messenger())==self.pending_messengers.first().map(|u|u.source){return None;}
@@ -2340,8 +2397,12 @@ impl App {
     // 顶栏：电池 + 日期 + 时钟。药丸里的电池与时钟会「飞」到顶栏位置（共享元素过渡）。
     // ---------------------------------------------------------------
     fn shared_header(&mut self, base: &Card, cx: f32, p: f32, reveal: f32, env: &Env) {
-        let local_cx = cx - base.origin.x;
-        let fit=((WIN_W-32.0)/self.resident.target.width).min(1.0);
+        // 左侧给托盘图标留了位置：内容整体右移半个预留宽度，胶囊变宽后仍然居中。
+        // 预留宽度做一次插值，微信/QQ 启动或退出时内容不会突然跳一下。
+        let target_lead = self.tray_lead();
+        let lead = base.ui.ctx().animate_value_with_time(egui::Id::new("tray-lead"), target_lead, 0.18);
+        let local_cx = cx - base.origin.x + lead * 0.5;
+        let fit=((WIN_W-32.0)/(self.resident.target.width+lead)).min(1.0);
         let fitted=base.scaled(local_cx,15.0,lerp(fit,1.0,p));
         let base=&fitted;
         let lyric=self.island_lyric().map(|(index,_)|index);
@@ -2398,6 +2459,28 @@ impl App {
         let pb=(local_cx+layout.x[bar::BATTERY].unwrap_or(0.0),15.0);
         let pcx=local_cx+layout.x[bar::CLOCK].unwrap()-paint::clock_width(base,&clock,size::PILL_CLOCK)/2.0;
 
+        // 胶囊左侧的常驻托盘图标（微信 / QQ）：来新消息时闪一会儿，点击跳到对应窗口。
+        if lead>0.5 && target_lead>0.5 && p<0.06 {
+            let appear=(lead/target_lead).clamp(0.0,1.0);
+            let left=local_cx-(layout.width+lead)/2.0;
+            let mut x=left+16.0+9.0;
+            for source in self.tray_sources() {
+                let unread=self.pending_messengers.iter().any(|item|item.source==source);
+                let alpha=appear*if unread && self.t<self.messenger_blink_until {
+                    (0.30+0.70*(0.5+0.5*(self.t*7.0).sin())) as f32
+                } else if unread {1.0} else {0.55};
+                let icon=Rect::from_center_size(Pos2::new(x,15.0),Vec2::new(18.0,18.0));
+                match self.tray_texture_for(base.ui.ctx(),source) {
+                    Some(texture)=>{base.painter.image(texture.id(),icon,Rect::from_min_max(Pos2::ZERO,egui::pos2(1.0,1.0)),Color32::from_white_alpha((255.0*alpha).round() as u8));},
+                    None=>crate::extras::messenger_icon(&base.scaled(x,15.0,0.9).faded(alpha),x,15.0,source),
+                }
+                if unread {base.circle(x+8.0,6.5,2.4,Color32::from_rgb(255,72,72));}
+                let button=base.hit(x-10.0,5.0,20.0,20.0,("tray-icon",source.name())).on_hover_text(format!("打开{}",source.name()));
+                if button.clicked(){self.pending.push(Cmd::ViewMessenger(self.latest_unread(source)));}
+                x+=TRAY_STEP;
+            }
+        }
+
         if self.effective_minimal() && self.t>=self.notification_bell_until && p < 0.02 { return; }
         // 电池：位置/大小连续插值
         let bk = lerp(1.0, 0.8, m);
@@ -2452,7 +2535,7 @@ impl App {
     }
 
     fn update_pet(&mut self, env: &Env, cx: f32) {
-        let cx=cx+self.resident.position(bar::PET);
+        let cx=cx+self.resident.position(bar::PET)+self.tray_lead()*0.5;
         let idle = self.idle_for();
         if self.pet.last_idle >= self.opts.pet_idle && idle < 1.0
             && matches!(self.pet.state, PetState::Dozing | PetState::Sleeping) {

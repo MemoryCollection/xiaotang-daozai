@@ -133,6 +133,33 @@ fn client_paths(source:crate::app::Messenger)->Vec<String>{
     paths
 }
 
+/// 微信 / QQ 是否正在运行（只看进程名，不要求有窗口）。给胶囊上的托盘图标用。
+pub fn client_running(source:crate::app::Messenger)->bool{
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    };
+    let names:&[&str]=match source {crate::app::Messenger::Wechat=>&["weixin.exe","wechat.exe"],crate::app::Messenger::Qq=>&["qq.exe"]};
+    unsafe{
+        let Ok(snapshot)=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0) else {return false;};
+        let mut entry=PROCESSENTRY32W{dwSize:std::mem::size_of::<PROCESSENTRY32W>() as u32,..Default::default()};
+        let mut more=Process32FirstW(snapshot,&mut entry).is_ok();
+        let mut found=false;
+        while more {
+            let name=String::from_utf16_lossy(&entry.szExeFile);
+            let name=name.trim_end_matches('\0').to_ascii_lowercase();
+            if names.contains(&name.as_str()){found=true;break;}
+            more=Process32NextW(snapshot,&mut entry).is_ok();
+        }
+        let _=CloseHandle(snapshot);
+        found
+    }
+}
+
+/// 客户端的可执行文件（托盘图标从它身上取），取不到返回 `None`。
+pub(crate) fn client_exe(source:crate::app::Messenger)->Option<String>{
+    client_paths(source).into_iter().find(|path|!path.contains('*') && std::path::Path::new(path).is_file())
+}
+
 fn client_main_frame(source:crate::app::Messenger,class:&str,style:u32,extended:u32)->bool{
     let known=match source {
         crate::app::Messenger::Qq=>matches!(class,"Chrome_WidgetWin_1"|"TXGuiFoundation"),

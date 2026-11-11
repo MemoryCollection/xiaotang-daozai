@@ -274,6 +274,8 @@ impl App {
         if self.notice.as_ref().is_some_and(|a|a.messenger()==Some(source)){self.notice=None;self.notification_bell_until=0.0;}
     }
     fn mark_messenger(&mut self,source:crate::app::Messenger,pid:u32,window:isize){
+        // 胶囊上的托盘图标：来一条新消息就闪 9 秒，连续来消息会一直闪。
+        self.messenger_blink_until=self.t+9.0;
         if let Some(u)=self.pending_messengers.iter_mut().find(|u|u.source==source && u.pid==pid){
             if window!=0 {u.window=window;}
             return;
@@ -1448,6 +1450,10 @@ impl App {
                         let master_hint=|ui:&mut egui::Ui|if !master {
                             ui.label(egui::RichText::new("提醒总开关已关闭（上方「系统提示」），打开后这里才会生效").size(12.0).color(Color32::from_rgb(230,150,40)));
                         };
+                        settings_label(ui,"胶囊图标");
+                        settings_card(ui,|ui|{
+                            setting_row(ui,"常驻托盘图标","胶囊左侧常驻显示微信、QQ 的托盘图标，来新消息时闪烁；点击直接跳到对应窗口（应用没运行时不显示）",&mut self.settings.tray_icons);
+                        });
                         settings_label(ui,"微信提醒");
                         settings_card(ui,|ui|{
                             master_hint(ui);

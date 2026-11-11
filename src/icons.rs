@@ -61,6 +61,19 @@ fn load_preview(path:&Path)->Loaded {
     Loaded{image:file_icon(path),metadata}
 }
 
+/// 可执行文件的图标，给胶囊上的托盘图标用。按路径缓存；取不到返回 `None`，
+/// 界面改画内置的矢量图标。
+pub(crate) fn exe_icon(path:&Path)->Option<ColorImage>{
+    use std::sync::{Mutex,OnceLock};
+    static CACHE:OnceLock<Mutex<HashMap<String,Option<ColorImage>>>>=OnceLock::new();
+    let key=path.to_string_lossy().to_string();
+    let cache=CACHE.get_or_init(||Mutex::new(HashMap::new()));
+    if let Some(cached)=cache.lock().ok().and_then(|cache|cache.get(&key).cloned()){return cached;}
+    let image=file_icon(path);
+    if let Ok(mut cache)=cache.lock(){cache.insert(key,image.clone());}
+    image
+}
+
 fn preview_image(width:usize,height:usize,pixels:Vec<u8>)->Option<ColorImage>{
     let image=image::RgbaImage::from_raw(width as u32,height as u32,pixels)?;
     let image=image::DynamicImage::ImageRgba8(image).thumbnail(96,96).to_rgba8();

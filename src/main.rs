@@ -29,6 +29,9 @@ struct Shell {
     placement_key: (String, i32, daozai::model::Dock),
     win_x: f32,
     sys: (Option<u8>, bool, PollClock),
+    /// 微信 / QQ 是否在运行（胶囊托盘图标用），几秒刷新一次。
+    tray_clients: [bool; 2],
+    tray_clients_at: PollClock,
     #[cfg(windows)]
     system_state: daozai::system::Snapshot,
     #[cfg(windows)]
@@ -137,6 +140,8 @@ impl Shell {
             placement_key: (String::new(), 0, daozai::model::Dock::Top),
             win_x: 0.0,
             sys: (None, false, PollClock::default()),
+            tray_clients: [false; 2],
+            tray_clients_at: PollClock::default(),
             #[cfg(windows)]
             system_state,
             #[cfg(windows)] system_ready:false,
@@ -229,6 +234,16 @@ impl Shell {
         let (backdrop,glass_blur)=(self.backdrop.as_ref().and_then(|b|b.color()),self.native.as_ref().is_some_and(|w|w.blur_active()));
         #[cfg(not(windows))]
         let (backdrop,glass_blur)=(None,false);
+        // 胶囊上的常驻托盘图标：几秒确认一次微信 / QQ 是否在运行。
+        if self.tray_clients_at.ready(Duration::from_secs(3)) {
+            self.tray_clients_at=PollClock::now();
+            #[cfg(windows)]
+            { self.tray_clients=if self.app.settings.tray_icons {
+                [daozai::wechat::client_running(app::Messenger::Wechat),daozai::wechat::client_running(app::Messenger::Qq)]
+            } else {[false;2]}; }
+            #[cfg(not(windows))]
+            { self.tray_clients=[false;2]; }
+        }
         Env {
             t: self.t0.elapsed().as_secs_f64(),
             clock,
@@ -257,6 +272,7 @@ impl Shell {
                 #[cfg(windows)] {self.native.as_ref().is_some_and(|w|w.opaque_surface())}
                 #[cfg(not(windows))] {false}
             },
+            clients: self.tray_clients,
         }
     }
 }
